@@ -1,0 +1,59 @@
+# Samples Management & Evidence Center · CESANTONI Somos Logística
+
+| Liga | Para quién |
+|---|---|
+| https://samples-cesantoni.github.io/ | CESANTONI (supervisión) y Bodega / ARMEX (operación). Cada quien entra con su correo y ve solo su menú. |
+
+Igual que proveedores y movimientos:
+
+| Parte | Servicio |
+|---|---|
+| Página | GitHub Pages (este repositorio) |
+| Accesos | Firebase Authentication (proyecto `proveedores-cesantoni`) |
+| Datos, fotos y bitácora | Cloud Firestore, colecciones propias con prefijo `sc_` (no toca `pv_` ni `sm_`) |
+| Permisos | Reglas de Firestore (`firestore.rules`, bloque «Samples») |
+| Correos a clientes | Gmail por el Apps Script «Correo proveedores CESANTONI», con EmailJS de respaldo |
+| Sincronización con la base de Samples, recordatorios y copia a la base de evidencias | Apps Script `apps-script/Samples.gs` (corre en Google, sin navegador abierto) |
+
+## Puesta en marcha (una sola vez)
+
+1. **Reglas de Firestore**: consola de Firebase › Firestore Database › Reglas › pega **todo** `firestore.rules` de este repositorio › Publicar.
+   El archivo ya incluye, sin cambios, los bloques de proveedores y movimientos, y agrega el de Samples al final.
+   Copia el mismo archivo al repositorio `proveedores-cesantoni.github.io` para que no se pierda en la próxima actualización.
+2. **Dominio autorizado**: Authentication › Settings › Authorized domains › agrega `samples-cesantoni.github.io`.
+3. **EmailJS** (respaldo): Account › Security › Allowed origins › agrega `https://samples-cesantoni.github.io`.
+4. **Primer administrador**: abre la liga. La primera vez pide crear el administrador de CESANTONI con correo y contraseña.
+   Si el correo ya tiene cuenta en proveedores o movimientos, se usa la misma contraseña.
+5. **Usuarios**: en *Configuración › Usuarios por área*, el administrador da de alta a cada persona con perfil
+   *Bodega (ARMEX)*, *CESANTONI* o *CESANTONI · administrador* y le asigna una contraseña temporal. La persona la cambia al entrar.
+6. **Apps Script** (sincronización automática y recordatorios):
+   - En https://script.google.com, con la cuenta dueña del proyecto de Firebase y de las bases de Sheets, crea el proyecto «Samples CESANTONI».
+   - Pega `apps-script/Samples.gs`. En *Configuración del proyecto* marca «Mostrar appsscript.json» y pega `apps-script/appsscript.json`.
+   - Ejecuta `instalar` una vez y autoriza los permisos. Crea los activadores: sincronizar cada 15 min, recordatorios cada hora y copia a la base de evidencias cada 30 min.
+   - Mientras tanto, CESANTONI puede cargar las solicitudes a mano en *Configuración › Importar la exportación de Sample Request (.xlsx)*. No se duplican folios.
+7. **Correos a clientes**: arrancan en **modo PRUEBA**. En *Configuración › Modo de correos a clientes* escribe un destinatario de prueba, revisa las tarjetas
+   y, cuando estén aprobadas, un administrador cambia a **PRODUCCIÓN**. Sin destinatario de prueba, los correos quedan «En cola — no enviado».
+8. **Copia a «Base Sample Evidence & Costs»**: cuando quieras activarla, cambia `ESCRIBIR_EN_BASE: true` en `Samples.gs`.
+   Antes de escribir, el script verifica los encabezados de cada hoja; si alguno cambió, no escribe nada.
+
+## Perfiles
+
+| Perfil | Qué hace | Qué no puede (bloqueado por las reglas, no solo oculto) |
+|---|---|---|
+| Bodega (ARMEX) | Captura rápida, evidencias con cámara, inventario (reservar y dar salida), guías con OCR, entregas, QR y etiquetas | Cambiar estatus, aprobar evidencias, leer costos, facturas, correos del cliente o avisos, subir existencias, borrar bitácora |
+| CESANTONI | Todo lo anterior, más dashboard, validación, estatus oficial, correos, avisos, facturación USD, reportes y expedientes con finanzas | Dar de alta usuarios ni activar correos en producción |
+| CESANTONI · administrador | Todo, más usuarios por área y activar el envío real a clientes | — |
+
+En pantallas, PDF, Excel, etiquetas y correos solo aparece el área (CESANTONI / Warehouse / System), nunca el nombre de una persona.
+El registro técnico de quién hizo qué se guarda en `sc_seguridad`, que solo leen los administradores desde la consola.
+
+## Capacidad (plan gratuito de Firebase, compartido con proveedores y movimientos)
+
+- Las fotos se guardan dentro de Firestore, por partes, igual que los documentos de proveedores. Se reducen a 1600 px, unos 150–300 KB cada una, y el límite por archivo es de 5 MB.
+- El almacenamiento gratuito es de **1 GiB para los tres sistemas juntos**. Con unas 8 fotos por solicitud son unas 400–600 solicitudes con evidencia completa.
+  Si se acerca al límite: pasar el proyecto al plan Blaze (pago por uso) o mover las fotos a Google Drive.
+- La plataforma lee solo lo que cambió desde la última consulta, para cuidar el límite diario de lecturas.
+
+## Versión
+
+`version.txt` sube de número con cada publicación. La página la compara al abrir y se recarga sola si hay una versión nueva.

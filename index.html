@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#191D20">
+  <title>Samples | CESANTONI Somos Logística</title>
+  <meta name="description" content="Samples Management & Evidence Center: solicitudes de muestras, evidencias, guías, etiquetas QR y facturación.">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/icono-180.png">
+  <script>/* Si hay una versión nueva publicada, recarga una vez para no quedarse con la página guardada en el navegador. */
+    (function () { var V = '1'; try { fetch('version.txt?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).then(function (t) {
+      t = String(t || '').trim(); if (!t || t === V || sessionStorage.getItem('recarga-' + t)) return;
+      sessionStorage.setItem('recarga-' + t, '1'); var u = new URL(location.href); u.searchParams.set('_v', t); location.replace(u.href); }).catch(function () {}); } catch (e) {} })();</script>
+  <link rel="stylesheet" href="css/app.css?v=1">
+  <script src="js/config.js?v=1"></script>
+  <script src="vendor/qrcode.js" defer></script>
+  <script type="module" src="js/app.js?v=1"></script>
+</head>
+<body>
+  <div id="app"><div class="empty" style="padding-top:20vh">Cargando…</div></div>
+  <div id="print-root" aria-hidden="true"></div>
+  <noscript>Esta plataforma necesita JavaScript.</noscript>
+</body>
+</html>

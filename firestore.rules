@@ -1,0 +1,433 @@
+rules_version = '2';
+// Reglas de seguridad de la plataforma de proveedores (colecciones con prefijo pv_).
+// Firebase > Firestore Database > Reglas > pegar este archivo > Publicar.
+// Otras colecciones del proyecto no se ven afectadas y el navegador no puede leerlas.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/pv_admins/$(request.auth.uid)).data; }
+    function isStaff() { return signedIn() && exists(/databases/$(database)/documents/pv_admins/$(request.auth.uid)) && me().activo == true; }
+    function isAdmin() { return isStaff() && me().rol == 'admin'; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+    function prov(uid) { return get(/databases/$(database)/documents/pv_proveedores/$(uid)).data; }
+    function editable(uid) { return prov(uid).estado in ['captura', 'correccion']; }
+    // En «corrección» solo se reemplazan los documentos marcados (o los requeridos que falten).
+    function canUpload(uid, tipo) {
+      let p = prov(uid);
+      return p.estado == 'captura' || (p.estado == 'correccion' && (!(tipo in p.entregados) ||
+        (tipo in p.revisiones && p.revisiones[tipo].revision == 'correccion' && p.revisiones[tipo].version == p.entregados[tipo])));
+    }
+
+    // Marca de que existe el administrador principal (se crea una sola vez).
+    match /pv_config/inicio {
+      allow get: if true;
+      allow create: if signedIn() && getAfter(/databases/$(database)/documents/pv_admins/$(request.auth.uid)).data.rol == 'admin';
+    }
+
+    // Contador del folio consecutivo (PROV-0001, PROV-0002…): solo sube de uno en uno
+    // y siempre junto con el alta de ese folio.
+    match /pv_config/folio {
+      allow get: if signedIn();
+      allow create: if signedIn() && request.resource.data.keys().hasOnly(['n']) && request.resource.data.n == 1 &&
+        existsAfter(/databases/$(database)/documents/pv_proveedores/$(request.auth.uid)) &&
+        !exists(/databases/$(database)/documents/pv_proveedores/$(request.auth.uid));
+      allow update: if signedIn() && request.resource.data.keys().hasOnly(['n']) && request.resource.data.n == resource.data.n + 1 &&
+        existsAfter(/databases/$(database)/documents/pv_proveedores/$(request.auth.uid)) &&
+        !exists(/databases/$(database)/documents/pv_proveedores/$(request.auth.uid));
+    }
+
+    match /pv_admins/{uid} {
+      allow read: if isStaff() || isOwner(uid);
+      allow create: if isAdmin() ||
+        (isOwner(uid) && request.resource.data.rol == 'admin' && request.resource.data.activo == true &&
+         !exists(/databases/$(database)/documents/pv_config/inicio) &&
+         existsAfter(/databases/$(database)/documents/pv_config/inicio));
+      allow update: if isAdmin() ||
+        (isOwner(uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cambiar_clave', 'ultimo_acceso']));
+    }
+
+    // Folio -> correo de acceso: se consulta un folio concreto; solo el personal puede listar.
+    match /pv_folios/{folio} {
+      allow get: if true;
+      allow list: if isStaff();
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid &&
+        request.resource.data.n == getAfter(/databases/$(database)/documents/pv_config/folio).data.n;
+      allow delete: if isAdmin();
+    }
+
+    match /pv_proveedores/{uid} {
+      allow read: if isOwner(uid) || isStaff();
+      allow create: if isOwner(uid) && request.resource.data.estado == 'captura' && request.resource.data.resultado == 'pendiente' &&
+        request.resource.data.entregados.size() == 0 && request.resource.data.revisiones.size() == 0;
+      allow update: if isStaff() || (isOwner(uid) && resource.data.estado in ['captura', 'correccion'] &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['datos', 'paso', 'actualizado_en', 'razon_social', 'pais',
+          'contacto', 'correo', 'telefono', 'entregados', 'estado', 'envios', 'enviado_en', 'reenviado_en']) &&
+        (request.resource.data.estado == resource.data.estado || request.resource.data.estado == 'enviado'));
+      // Solo un administrador puede borrar un registro completo (con sus documentos e historial).
+      allow delete: if isAdmin();
+
+      match /documentos/{docId} {
+        allow read: if isOwner(uid) || isStaff();
+        allow create: if isOwner(uid) && canUpload(uid, request.resource.data.tipo) && request.resource.data.proveedor_id == uid &&
+          request.resource.data.revision == 'pendiente' && request.resource.data.vigente == true;
+        allow update: if isStaff() || (isOwner(uid) && canUpload(uid, resource.data.tipo) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['vigente']) && request.resource.data.vigente == false);
+        allow delete: if isAdmin();
+
+        match /partes/{n} {
+          allow read: if isOwner(uid) || isStaff();
+          allow create: if isOwner(uid) && editable(uid) && request.resource.data.d is string && request.resource.data.d.size() <= 700000;
+          allow delete: if isAdmin();
+        }
+      }
+
+      match /historial/{id} {
+        allow read: if isOwner(uid) || isStaff();
+        allow create: if isStaff() || (isOwner(uid) && request.resource.data.actor_tipo == 'proveedor');
+        allow delete: if isAdmin();
+      }
+    }
+
+    // Tamaño total de documentos (pantalla Sistema).
+    match /{path=**}/documentos/{docId} {
+      allow read: if isStaff();
+    }
+
+    // Bitácora de correos: quien tiene sesión registra sus envíos; solo el personal la consulta.
+    match /pv_correos/{id} {
+      allow create: if signedIn();
+      allow read, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    // Destinatarios de las alertas internas (los lee el navegador que envía la alerta).
+    match /pv_destinatarios/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // ================================================================== Solicitudes de movimientos (colecciones sm_)
+    // Plataforma aparte (sitio movimientos-cesantoni.github.io): no lee ni escribe nada de las colecciones pv_ de proveedores.
+    function smYo() { return get(/databases/$(database)/documents/sm_admins/$(request.auth.uid)).data; }
+    function smStaff() { return signedIn() && exists(/databases/$(database)/documents/sm_admins/$(request.auth.uid)) && smYo().activo == true; }
+    function smAdmin() { return smStaff() && smYo().rol == 'admin'; }
+    // Perfiles: admin (todo), planeador (opera las solicitudes; «operador» es el nombre anterior) y facturación (solo consulta y marca facturadas).
+    function smOpera() { return smStaff() && smYo().rol in ['admin', 'planeador', 'operador']; }
+    function smFactura() { return smStaff() && smYo().rol in ['admin', 'facturacion']; }
+    function smSol(f) { return get(/databases/$(database)/documents/sm_solicitudes/$(f)).data; }
+    function smSolDespues(f) { return getAfter(/databases/$(database)/documents/sm_solicitudes/$(f)).data; }
+    function smDueno(f) { return signedIn() && smSol(f).uid == request.auth.uid; }
+    function smAbierta(f) { return smSol(f).estado in ['recibida', 'en_revision', 'informacion', 'programada', 'en_transito']; }
+    function smNueva(f) {
+      return existsAfter(/databases/$(database)/documents/sm_solicitudes/$(f)) && !exists(/databases/$(database)/documents/sm_solicitudes/$(f));
+    }
+    function smInicioNuevo() {
+      return !exists(/databases/$(database)/documents/sm_config/inicio) && existsAfter(/databases/$(database)/documents/sm_config/inicio);
+    }
+
+    // Respuesta de quien autoriza el costo desde la liga del correo (sin cuenta): solo con un token pendiente de este folio,
+    // solo los campos de la autorización y con el mismo resultado en sm_autorizaciones/{token}.
+    function smAut(t) { return /databases/$(database)/documents/sm_autorizaciones/$(t); }
+    function smRespuestaAut(f) {
+      return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['aut_estado', 'aut_por', 'aut_nombre', 'aut_fecha', 'aut_ref', 'aut_comentario', 'actualizada']) &&
+        resource.data.aut_estado == 'Pendiente de autorización' &&
+        request.resource.data.aut_estado in ['Autorizado', 'Rechazado'] &&
+        request.resource.data.aut_ref is string && request.resource.data.aut_ref.size() == 32 &&
+        exists(smAut(request.resource.data.aut_ref)) &&
+        get(smAut(request.resource.data.aut_ref)).data.folio == f &&
+        get(smAut(request.resource.data.aut_ref)).data.estado == 'Pendiente de autorización' &&
+        get(smAut(request.resource.data.aut_ref)).data.correo == request.resource.data.aut_por &&
+        getAfter(smAut(request.resource.data.aut_ref)).data.estado == request.resource.data.aut_estado;
+    }
+
+    // Envío automático de la autorización de costo: quien solicita lo hace una sola vez, al crear su folio.
+    function smAutAuto(f) {
+      return signedIn() && resource.data.uid == request.auth.uid && resource.data.estado == 'recibida' &&
+        resource.data.get('aut_enviada', '') == '' && resource.data.get('aut_estado', '') == 'Pendiente de autorización' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['aut_enviada', 'actualizada']) &&
+        request.resource.data.aut_enviada is string && request.resource.data.aut_enviada.size() > 0;
+    }
+
+    // Quien solicita puede modificar su folio solo mientras está «Recibida» y sin autorización enviada; nunca datos de Logística.
+    function smModifica(f) {
+      return signedIn() && resource.data.uid == request.auth.uid &&
+        resource.data.estado == 'recibida' && request.resource.data.estado == 'recibida' &&
+        resource.data.get('aut_enviada', '') == '' &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['solicitante', 'area', 'telefono', 'tipo', 'prioridad', 'forma_envio',
+          'horario', 'motivo', 'dev_motivo', 'dev_checklist', 'origen_direccion', 'origen_contacto', 'origen_telefono', 'origen_link',
+          'destino_direccion', 'destino_contacto', 'destino_telefono', 'destino_link', 'origen_ciudad', 'origen_estado', 'destino_ciudad', 'destino_estado',
+          'producto_tipo', 'producto_otro', 'tipo_otro',
+          'articulos', 'observaciones', 'costo_absorbe', 'costo_detalle', 'fecha_requerida', 'fecha_entrega', 'fecha_abierta', 'recoleccion',
+          'fecha_recoleccion', 'recoleccion_abierta', 'fuera_tiempo', 'aut_estado', 'aut_correo', 'aut_motivo', 'dev_cumple', 'paquetes',
+          'paq_total', 'paq_peso_kg', 'paq_vol_kg', 'acepta_condiciones', 'condiciones_fecha', 'actualizada', 'modificada', 'modificaciones']) &&
+        request.resource.data.get('aut_estado', '') in ['', 'Pendiente de autorización'];
+    }
+
+    match /sm_config/inicio {
+      allow get: if true;
+      allow create: if signedIn() && getAfter(/databases/$(database)/documents/sm_admins/$(request.auth.uid)).data.rol == 'admin';
+    }
+    // Correos que reciben los avisos de solicitudes nuevas (los lee el navegador que manda el aviso).
+    match /sm_config/avisos {
+      allow get: if signedIn();
+      allow create, update: if smAdmin() || (signedIn() && smInicioNuevo());
+    }
+    // Catálogos editables por el administrador (áreas, qué envías, tipos de movimiento). El formulario los lee sin cuenta.
+    match /sm_config/catalogos {
+      allow get: if true;
+      allow create, update: if smAdmin();
+    }
+    // Plantilla de movimientos (Excel) y su lista de transportistas: la sube el administrador; solo la lee el personal.
+    match /sm_config/plantilla {
+      allow get: if smStaff();
+      allow create, update: if smAdmin();
+    }
+    match /sm_config/plantilla_archivo {
+      allow get: if smStaff();
+      allow create, update: if smAdmin();
+    }
+    // Consecutivo del folio CSTEXT (lo asigna el planeador; el administrador fija desde dónde sigue).
+    match /sm_config/cstext {
+      allow get: if smStaff();
+      allow create, update: if smOpera();
+    }
+    // Folio consecutivo CSTEXT00760…: solo sube de uno en uno y siempre junto con el alta de esa solicitud.
+    // El administrador fija desde qué número sigue (n = último número usado).
+    match /sm_config/folio {
+      allow get: if signedIn();
+      allow create: if (signedIn() && request.resource.data.keys().hasOnly(['n', 'ultimo']) && request.resource.data.n == 1 && smNueva(request.resource.data.ultimo)) ||
+        (smAdmin() && request.resource.data.keys().hasOnly(['n', 'ultimo']) && request.resource.data.n is int && request.resource.data.n >= 0);
+      allow update: if (signedIn() && request.resource.data.keys().hasOnly(['n', 'ultimo']) && request.resource.data.n == resource.data.n + 1 &&
+        smNueva(request.resource.data.ultimo)) ||
+        (smAdmin() && request.resource.data.keys().hasOnly(['n', 'ultimo']) && request.resource.data.n is int && request.resource.data.n >= 0);
+    }
+
+    match /sm_admins/{uid} {
+      allow read: if smStaff() || isOwner(uid);
+      allow create: if smAdmin() ||
+        (isOwner(uid) && request.resource.data.rol == 'admin' && request.resource.data.activo == true && smInicioNuevo()) ||
+        (isOwner(uid) && exists(/databases/$(database)/documents/sm_invitaciones/$(request.auth.token.email)) &&
+         request.resource.data.activo == true && request.resource.data.cambiar_clave == false &&
+         request.resource.data.correo == request.auth.token.email &&
+         request.resource.data.rol == get(/databases/$(database)/documents/sm_invitaciones/$(request.auth.token.email)).data.rol);
+      allow update: if smAdmin() || (isOwner(uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cambiar_clave', 'ultimo_acceso']));
+    }
+    // Personal invitado que ya tenía cuenta (por ejemplo, del panel de proveedores): entra con su misma contraseña.
+    match /sm_invitaciones/{correo} {
+      allow get: if smAdmin() || (signedIn() && request.auth.token.email == correo);
+      allow list, create: if smAdmin();
+      allow delete: if smAdmin() || (signedIn() && request.auth.token.email == correo);
+    }
+
+    match /sm_solicitudes/{f} {
+      allow read: if smStaff() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid && request.resource.data.folio == f &&
+        request.resource.data.estado == 'recibida' && request.resource.data.correo == request.auth.token.email.lower() &&
+        request.resource.data.n == getAfter(/databases/$(database)/documents/sm_config/folio).data.n &&
+        getAfter(/databases/$(database)/documents/sm_config/folio).data.ultimo == f &&
+        request.resource.data.keys().hasOnly(['solicitante', 'area', 'correo', 'telefono', 'autoriza', 'tipo', 'prioridad', 'forma_envio',
+          'horario', 'cliente', 'referencia', 'motivo', 'dev_motivo', 'dev_checklist', 'origen_nombre', 'origen_direccion', 'origen_ciudad',
+          'origen_contacto', 'destino_nombre', 'destino_direccion', 'destino_ciudad', 'destino_contacto', 'folio', 'n', 'uid', 'estado',
+          'creada', 'actualizada', 'cerrada', 'dev_cumple', 'paquetes', 'paq_total', 'paq_peso_kg', 'paq_vol_kg',
+          'producto_tipo', 'producto_otro', 'tipo_otro', 'articulos', 'observaciones', 'costo_absorbe', 'costo_detalle',
+          'fecha_requerida', 'fecha_abierta', 'recoleccion', 'fecha_recoleccion', 'recoleccion_abierta', 'fuera_tiempo', 'aut_gerente', 'aut_estado',
+          'origen_telefono', 'origen_referencias', 'destino_telefono', 'destino_referencias', 'origen_estado', 'destino_estado',
+          'fecha_entrega', 'aut_correo', 'aut_motivo', 'origen_link', 'destino_link', 'acepta_condiciones', 'condiciones_fecha', 'folio_cstext']) &&
+        // El consecutivo CSTEXT es el mismo folio de la solicitud.
+        request.resource.data.get('folio_cstext', f) == f &&
+        // Quien solicita no puede registrar su propia autorización: solo «Pendiente de autorización» (o nada).
+        request.resource.data.get('aut_estado', '') in ['', 'Pendiente de autorización'];
+      // Quien solicita solo puede responder (Falta información → En revisión) o cancelar mientras no esté programada.
+      allow update: if smOpera() || smRespuestaAut(f) || smModifica(f) || smAutAuto(f) ||
+        (smFactura() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['facturada', 'facturada_por', 'actualizada'])) ||
+        (signedIn() && resource.data.uid == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['estado', 'actualizada', 'cerrada']) &&
+        (request.resource.data.estado == resource.data.estado ||
+         (resource.data.estado == 'informacion' && request.resource.data.estado == 'en_revision') ||
+         (resource.data.estado in ['recibida', 'en_revision', 'informacion'] && request.resource.data.estado == 'cancelada')));
+      allow delete: if smAdmin();
+
+      // Mensajes: quien solicita solo ve los visibles; las notas internas son del personal.
+      match /seguimiento/{id} {
+        allow read: if smStaff() || (smDueno(f) && resource.data.visible == true);
+        allow create: if smOpera() || (signedIn() && smSolDespues(f).uid == request.auth.uid &&
+          request.resource.data.visible == true && request.resource.data.autor_tipo == 'solicitante');
+        allow delete: if smAdmin();
+      }
+      match /interno/{d} {
+        allow read: if smStaff();
+        allow write: if smOpera();
+      }
+      match /archivos/{id} {
+        allow read: if smStaff() || smDueno(f);
+        allow create: if smOpera() || (smDueno(f) && smAbierta(f) && request.resource.data.partes is int);
+        allow delete: if smAdmin();
+        match /partes/{n} {
+          allow read: if smStaff() || smDueno(f);
+          allow create: if (smOpera() || (smDueno(f) && smAbierta(f))) && request.resource.data.d is string && request.resource.data.d.size() <= 700000;
+          allow delete: if smAdmin();
+        }
+      }
+    }
+
+    // Autorizaciones de costo enviadas por correo. El id es un token secreto de 32 caracteres: se lee solo conociéndolo.
+    match /sm_autorizaciones/{t} {
+      allow get: if t.size() == 32;
+      allow list: if smStaff();
+      allow delete: if smOpera();
+      // Logística, o quien solicita al crear su folio (junto con aut_enviada en la misma escritura y al correo que él mismo indicó).
+      allow create: if smOpera() || (signedIn() && t.size() == 32 && request.resource.data.folio is string &&
+        smSol(request.resource.data.folio).uid == request.auth.uid &&
+        smSol(request.resource.data.folio).get('aut_enviada', '') == '' &&
+        smSol(request.resource.data.folio).get('aut_estado', '') == 'Pendiente de autorización' &&
+        request.resource.data.correo == smSol(request.resource.data.folio).aut_correo &&
+        request.resource.data.estado == 'Pendiente de autorización' &&
+        smSolDespues(request.resource.data.folio).aut_enviada == request.resource.data.enviada);
+      allow update: if smOpera() || (t.size() == 32 && resource.data.estado == 'Pendiente de autorización' &&
+        request.resource.data.estado in ['Autorizado', 'Rechazado'] &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['estado', 'respondida', 'nombre', 'comentario']) &&
+        getAfter(/databases/$(database)/documents/sm_solicitudes/$(resource.data.folio)).data.aut_estado == request.resource.data.estado &&
+        getAfter(/databases/$(database)/documents/sm_solicitudes/$(resource.data.folio)).data.aut_ref == t);
+      // Copia de la cotización para verla desde la liga.
+      match /archivos/{id}/partes/{n} {
+        allow read: if t.size() == 32;
+        allow write: if smOpera() || (signedIn() && smSol(get(smAut(t)).data.folio).uid == request.auth.uid &&
+          request.resource.data.d is string && request.resource.data.d.size() <= 700000);
+      }
+    }
+
+    // Bitácora de correos de solicitudes.
+    match /sm_correos/{id} {
+      allow create: if signedIn();
+      allow read, update: if smStaff();
+      allow delete: if smAdmin();
+    }
+
+    // ================================================================== Samples Management & Evidence Center (colecciones sc_)
+    // Sitio samples-cesantoni.github.io. No lee ni escribe colecciones pv_ (proveedores) ni sm_ (movimientos).
+    // Perfiles: admin (CESANTONI, administra usuarios), cesantoni (supervisa, estatus, correos, finanzas) y bodega (ARMEX: opera y documenta).
+    // La sincronización con Google Sheets y los recordatorios corren en Apps Script con la cuenta dueña del proyecto (no pasan por estas reglas).
+    function scYo() { return get(/databases/$(database)/documents/sc_admins/$(request.auth.uid)).data; }
+    function scStaff() { return signedIn() && exists(/databases/$(database)/documents/sc_admins/$(request.auth.uid)) && scYo().activo == true; }
+    function scCes() { return scStaff() && scYo().rol in ['admin', 'cesantoni']; }
+    function scAdmin() { return scStaff() && scYo().rol == 'admin'; }
+    function scBod() { return scStaff() && scYo().rol == 'bodega'; }
+    function scArea() { return scCes() ? 'CESANTONI' : 'BODEGA'; }
+    function scAreaVisible() { return scCes() ? 'CESANTONI' : 'Warehouse'; }
+    function scSolo(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+    function scInicioNuevo() {
+      return !exists(/databases/$(database)/documents/sc_config/inicio) && existsAfter(/databases/$(database)/documents/sc_config/inicio);
+    }
+
+    match /sc_config/{id} {
+      allow get: if id == 'inicio' || scStaff();
+      allow list: if scStaff();
+      allow create: if (id == 'inicio' && signedIn() && scInicioNuevo() &&
+          getAfter(/databases/$(database)/documents/sc_admins/$(request.auth.uid)).data.rol == 'admin') || (id != 'inicio' && scCes());
+      allow update: if id != 'inicio' && scCes();
+    }
+    match /sc_admins/{uid} {
+      allow read: if scAdmin() || isOwner(uid);
+      allow create: if scAdmin() ||
+        (isOwner(uid) && request.resource.data.rol == 'admin' && request.resource.data.activo == true && scInicioNuevo()) ||
+        (isOwner(uid) && exists(/databases/$(database)/documents/sc_invitaciones/$(request.auth.token.email)) &&
+         request.resource.data.activo == true && request.resource.data.cambiar_clave == false &&
+         request.resource.data.correo == request.auth.token.email &&
+         request.resource.data.rol == get(/databases/$(database)/documents/sc_invitaciones/$(request.auth.token.email)).data.rol);
+      allow update: if scAdmin() || (isOwner(uid) && scSolo(['cambiar_clave', 'ultimo_acceso']));
+    }
+    match /sc_invitaciones/{correo} {
+      allow get: if scAdmin() || (signedIn() && request.auth.token.email == correo);
+      allow list, create: if scAdmin();
+      allow delete: if scAdmin() || (signedIn() && request.auth.token.email == correo);
+    }
+
+    // Solicitudes (sincronizadas del formulario original). Bodega solo agrega observaciones; el estatus oficial es de CESANTONI.
+    match /sc_solicitudes/{no} {
+      allow read: if scStaff();
+      allow create: if scCes();
+      allow update: if scCes() || (scBod() && scSolo(['observations', '_v', '_u']));
+    }
+    // Correo del cliente: solo CESANTONI (es quien autoriza y envía las notificaciones).
+    match /sc_contactos/{no} {
+      allow read, create, update: if scCes();
+    }
+    // Paquetería y guía: la captura Bodega; la fecha estimada confirmada solo la registra CESANTONI.
+    match /sc_envios/{no} {
+      allow read: if scStaff();
+      allow create: if scCes() || (scBod() && !request.resource.data.keys().hasAny(['estimatedDate', 'estimateConfirmed']));
+      allow update: if scCes() || (scBod() && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['estimatedDate', 'estimateConfirmed']));
+    }
+    // Inventario: Bodega solo puede bajar existencias (salidas) y ajustar lo reservado; nunca valores negativos.
+    match /sc_inventario/{id} {
+      allow read: if scStaff();
+      allow create: if scCes();
+      allow update: if scCes() || (scBod() && scSolo(['onHand', 'reserved', '_v', '_u']) &&
+        request.resource.data.onHand is number && request.resource.data.onHand >= 0 && request.resource.data.onHand <= resource.data.onHand &&
+        request.resource.data.reserved is number && request.resource.data.reserved >= 0 && request.resource.data.reserved <= request.resource.data.onHand);
+    }
+    match /sc_reservas/{id} {
+      allow read: if scStaff();
+      allow create: if scStaff() && request.resource.data.state == 'ACTIVE' && request.resource.data.qty is int && request.resource.data.qty > 0;
+      allow update: if scStaff() && resource.data.state == 'ACTIVE' && request.resource.data.state in ['RELEASED', 'ISSUED'] &&
+        scSolo(['state', 'releasedAt', 'issuedAt', '_v', '_u']);
+    }
+    match /sc_movimientos/{id} {
+      allow read: if scStaff();
+      allow create: if scStaff() && request.resource.data.area == scArea();
+    }
+    // Evidencias: se cargan "en revisión"; solo CESANTONI aprueba o devuelve. Las versiones anteriores nunca se borran.
+    match /sc_evidencias/{id} {
+      allow read: if scStaff();
+      allow create: if scStaff() && request.resource.data.state == 'PENDING' && request.resource.data.review == null && request.resource.data.area == scArea();
+      allow update: if (scCes() && scSolo(['state', 'review', 'supersededBy', '_v', '_u'])) ||
+        (scStaff() && resource.data.state == 'RETURNED' && resource.data.supersededBy == null && scSolo(['supersededBy', '_v', '_u']));
+    }
+    match /sc_archivos/{id} {
+      allow read: if scStaff();
+      allow create: if scStaff() && request.resource.data.category == 'EVIDENCE' && request.resource.data.area == scArea();
+      match /partes/{n} {
+        allow read: if scStaff();
+        allow create: if scStaff() && request.resource.data.d is string && request.resource.data.d.size() <= 700000;
+      }
+    }
+    match /sc_operaciones/{id} {
+      allow read, create: if scStaff();
+    }
+    match /sc_historial/{id} {
+      allow read: if scStaff();
+      allow create: if scCes() && request.resource.data.area in ['CESANTONI', 'SYSTEM'];
+    }
+    // Bitácora visible: solo áreas, nunca personas. No se modifica ni se borra.
+    match /sc_eventos/{id} {
+      allow read: if scStaff();
+      allow create: if scStaff() && request.resource.data.area in [scAreaVisible(), 'System'];
+    }
+    // Pendientes de copiar a «Base Sample Evidence & Costs» (los procesa Apps Script).
+    match /sc_salida/{id} {
+      allow read, create: if scStaff();
+      allow update: if scCes();
+    }
+    // Registro técnico de seguridad (quién hizo qué): no se muestra en ninguna pantalla.
+    match /sc_seguridad/{id} {
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow read: if scAdmin();
+    }
+    // Información de CESANTONI: correos a clientes, avisos, costos, facturas y duplicados. Bodega no puede leerla.
+    match /sc_correos/{id} { allow read, create, update: if scCes(); }
+    match /sc_avisos/{id} { allow read, create, update: if scCes(); }
+    match /sc_costos/{no} { allow read, create, update: if scCes(); }
+    match /sc_facturas/{id} { allow read, create, update: if scCes(); }
+    match /sc_duplicados/{key} { allow read, create, update: if scCes(); }
+    match /sc_sync/{id} { allow read, create: if scCes(); }
+    match /sc_facturas_archivos/{id} {
+      allow read, create: if scCes();
+      match /partes/{n} {
+        allow read: if scCes();
+        allow create: if scCes() && request.resource.data.d is string && request.resource.data.d.size() <= 700000;
+      }
+    }
+  }
+}
