@@ -68,9 +68,9 @@ function renderLogin(mode = 'login', notice = '') {
   const submit = { login: t('login.signin'), setup: t('login.setupBtn'), forgot: t('login.send'), change: t('common.save') }[mode];
   root.innerHTML = html`<div class="login">
     <section class="login-brand">
-      <div class="logo-box"><img src="assets/logo-cesantoni.png" alt="CESANTONI Porcelanato Premium"></div>
+      <div class="logo-box"><img src="assets/icono-c-blanco.png" alt="" class="logo-c"><img src="assets/logo-cesantoni-blanco.png" alt="CESANTONI Porcelanato Premium" class="logo-word"></div>
       <div><h1>${t('login.title')}</h1><p>${t('login.tagline')}</p></div>
-      <div class="somos"><img src="assets/logo-somos-logistica.png" alt="Somos Logística CESANTONI"></div>
+      <div class="somos"><img src="assets/logo-somos-blanco.png" alt="Somos Logística CESANTONI"></div>
     </section>
     <section class="login-form"><form class="login-card" novalidate>
       <div class="lang">${langSwitch()}</div>
@@ -121,9 +121,9 @@ function renderShell() {
     : html`<div class="demo-banner">${icon('info')}<span>${t('demo.banner')}</span></div>`;
   root.innerHTML = html`<div class="shell ${mini ? 'mini' : ''}">
     <aside class="sidebar" aria-label="Main menu">
-      <div class="brand"><span class="logo-chip"><img src="assets/logo-cesantoni.png" alt="CESANTONI"></span><span class="mini-mark" aria-hidden="true">C</span></div>
+      <div class="brand"><img class="brand-c" src="assets/icono-c-blanco.png" alt=""><img class="brand-word" src="assets/logo-cesantoni-blanco.png" alt="CESANTONI"></div>
       <nav class="nav">${raw(MENU[s.area].map(([g, items]) => `<div class="group">${esc(t(g))}</div>` + items.map(([r, ic]) => `<a href="#/${r}" data-route="${r}" title="${esc(t('nav.' + r))}">${icon(ic).s}<span class="nav-label">${esc(t('nav.' + r))}</span><span class="badge-dot" data-badge="${r}" hidden></span></a>`).join('')).join(''))}</nav>
-      <div class="side-foot"><div class="somos"><img src="assets/logo-somos-logistica.png" alt="Somos Logística CESANTONI"></div></div>
+      <div class="side-foot"><img src="assets/logo-somos-blanco.png" alt="Somos Logística CESANTONI"></div>
     </aside>
     <div class="backdrop" data-backdrop></div>
     <div class="main">
