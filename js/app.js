@@ -116,9 +116,6 @@ function bindLang(rerender) {
 function renderShell() {
   const s = state.session;
   let mini = false; try { mini = localStorage.getItem('cs.mini') === '1'; } catch { /* ignore */ }
-  const banner = s.email.live
-    ? (s.email.mode !== 'PRODUCTION' ? html`<div class="demo-banner">${icon('info')}<span>${t('test.banner')}</span></div>` : '')
-    : html`<div class="demo-banner">${icon('info')}<span>${t('demo.banner')}</span></div>`;
   root.innerHTML = html`<div class="shell ${mini ? 'mini' : ''}">
     <aside class="sidebar" aria-label="Main menu">
       <div class="brand"><img class="brand-c" src="assets/icono-c-blanco.png" alt=""><img class="brand-word" src="assets/logo-cesantoni-blanco.png" alt="CESANTONI"></div>
@@ -135,7 +132,6 @@ function renderShell() {
         ${langSwitch()}
         <button class="icon-btn" data-logout aria-label="${t('logout')}" title="${t('logout')}">${icon('logout')}</button>
       </header>
-      ${banner}
       <main class="content" id="view" tabindex="-1"></main>
     </div></div>`.s;
   bindLang();

@@ -12,10 +12,10 @@
     (function () { var V = '3'; try { fetch('version.txt?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).then(function (t) {
       t = String(t || '').trim(); if (!t || t === V || sessionStorage.getItem('recarga-' + t)) return;
       sessionStorage.setItem('recarga-' + t, '1'); var u = new URL(location.href); u.searchParams.set('_v', t); location.replace(u.href); }).catch(function () {}); } catch (e) {} })();</script>
-  <link rel="stylesheet" href="css/app.css?v=3">
-  <script src="js/config.js?v=3"></script>
+  <link rel="stylesheet" href="css/app.css?v=4">
+  <script src="js/config.js?v=4"></script>
   <script src="vendor/qrcode.js" defer></script>
-  <script type="module" src="js/app.js?v=3"></script>
+  <script type="module" src="js/app.js?v=4"></script>
 </head>
 <body>
   <div id="app"><div class="empty" style="padding-top:20vh">Cargando…</div></div>
