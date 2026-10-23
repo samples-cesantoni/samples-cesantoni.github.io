@@ -374,9 +374,10 @@ service cloud.firestore {
       allow update: if scStaff() && resource.data.state == 'ACTIVE' && request.resource.data.state in ['RELEASED', 'ISSUED'] &&
         scSolo(['state', 'releasedAt', 'issuedAt', '_v', '_u']);
     }
+    // Movimientos de inventario: los descuentos los aplica la base de Samples (área SYSTEM, importados por CESANTONI o por Apps Script).
     match /sc_movimientos/{id} {
       allow read: if scStaff();
-      allow create: if scStaff() && request.resource.data.area == scArea();
+      allow create: if scStaff() && (request.resource.data.area == scArea() || (scCes() && request.resource.data.area == 'SYSTEM'));
     }
     // Evidencias: se cargan "en revisión"; solo CESANTONI aprueba o devuelve. Las versiones anteriores nunca se borran.
     match /sc_evidencias/{id} {

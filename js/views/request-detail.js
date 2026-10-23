@@ -61,13 +61,14 @@ export async function render(el, ctx) {
   }
 
   function inventory() {
-    return raw(det.lines.map((l) => html`<div class="card" data-line="${l.line}">
-      <div class="card-head"><div><h2>${l.line}. ${l.model} · ${l.color}</h2><p>${l.pieceSize} · ${t('common.qty')}: ${l.pieces} · ${t('det.reserved')}: ${l.reservedQty}</p></div>${l.shortage ? html`<span class="badge red">${t('det.shortage')}</span>` : l.reservedQty >= l.pieces ? html`<span class="badge green">${t('det.reserved')}</span>` : ''}</div>
-      ${l.reservations.length ? html`<div class="table-wrap" style="margin-bottom:14px"><table class="t"><thead><tr><th>${t('common.location')}</th><th class="num">${t('common.qty')}</th><th>${t('common.status')}</th><th>${t('common.date')}</th><th></th></tr></thead><tbody>${raw(l.reservations.map((r) => { const c = l.candidates.find((x) => x.itemId === r.itemId); return html`<tr><td>${c?.location || r.itemId}</td><td class="num">${r.qty}</td><td>${r.state === 'ISSUED' ? html`<span class="badge green">${t('det.issued')}</span>` : html`<span class="badge amber">${t('det.reserved')}</span>`}</td><td>${fmtDate(r.issuedAt || r.createdAt)}</td><td style="text-align:right;white-space:nowrap">${r.state === 'ACTIVE' ? html`<button class="btn btn-ghost btn-sm" data-release="${r.id}">${t('det.release')}</button> <button class="btn btn-dark btn-sm" data-issue="${r.id}">${t('det.issue')}</button>` : ''}</td></tr>`.s; }).join(''))}</tbody></table></div>` : ''}
+    return raw(html`<div class="callout info" style="margin-bottom:18px">${icon('info')}<span>${t('det.baseDeducts')}</span></div>`.s + det.lines.map((l) => html`<div class="card" data-line="${l.line}">
+      <div class="card-head"><div><h2>${l.line}. ${l.model}${l.color ? ` · ${l.color}` : ''}</h2><p>${l.pieceSize} · ${t('common.qty')}: ${l.pieces} · ${t('det.deducted')}: ${l.deductedQty}</p></div>
+        ${l.deductedQty >= l.pieces ? html`<span class="badge green">${t('det.deductedOk')}</span>` : l.shortage ? html`<span class="badge red">${t('det.shortage')}</span>` : html`<span class="badge amber">${t('det.notDeducted')}</span>`}</div>
+      ${l.deductions.length ? html`<div class="table-wrap" style="margin-bottom:14px"><table class="t cards"><thead><tr><th>${t('common.date')}</th><th>${t('common.location')}</th><th>${t('inv.type')}</th><th class="num">${t('common.qty')}</th><th class="num">${t('det.stockMove')}</th></tr></thead><tbody>
+        ${raw(l.deductions.map((m) => html`<tr><td data-l="${t('common.date')}">${fmtDate(m.at, false)}</td><td data-l="${t('common.location')}">${m.location || '—'}</td><td data-l="${t('inv.type')}">${m.sampleType || '—'}</td><td data-l="${t('common.qty')}" class="num">${m.qty}</td><td data-l="${t('det.stockMove')}" class="num">${m.before ?? '—'} → ${m.after ?? '—'}</td></tr>`.s).join(''))}</tbody></table></div>` : ''}
       <h3 style="margin-bottom:8px">${t('det.candidates')}</h3>
-      ${l.candidates.length ? html`<div class="table-wrap"><table class="t cards"><thead><tr><th>${t('common.sku')}</th><th>${t('inv.format')}</th><th>${t('inv.type')}</th><th>${t('common.location')}</th><th class="num">${t('inv.onHand')}</th><th class="num">${t('det.available')}</th><th></th></tr></thead><tbody>
-        ${raw(l.candidates.map((c) => html`<tr><td data-l="${t('common.sku')}" class="mono">${c.sku || t('common.notRegistered')}</td><td data-l="${t('inv.format')}">${c.format}</td><td data-l="${t('inv.type')}">${c.sampleType} ${c.preferred ? raw(`<span class="badge orange">${esc(t('det.preferred'))}</span>`) : ''}</td><td data-l="${t('common.location')}">${c.location || '—'}</td><td data-l="${t('inv.onHand')}" class="num">${c.onHand}</td><td data-l="${t('det.available')}" class="num"><span class="${c.available <= 0 ? 'badge red' : ''}">${c.available}</span></td>
-          <td style="white-space:nowrap;text-align:right">${l.reservedQty < l.pieces && !['DELIVERED', 'CANCELLED'].includes(det.status) ? html`<input class="input" type="number" min="1" max="${Math.min(c.available, l.pieces - l.reservedQty)}" value="${Math.max(0, Math.min(c.available, l.pieces - l.reservedQty))}" style="width:76px;display:inline-block;min-height:32px;padding:4px 8px" data-qty="${c.itemId}" aria-label="${t('common.qty')}"> <button class="btn btn-primary btn-sm" data-reserve="${c.itemId}" ${c.available <= 0 ? 'disabled' : ''}>${t('det.reserve')}</button>` : ''}</td></tr>`.s).join(''))}</tbody></table></div>` : html`<div class="callout warn">${icon('alert')}<span>${t('det.noMatch')}</span></div>`}
+      ${l.candidates.length ? html`<div class="table-wrap"><table class="t cards"><thead><tr><th>${t('common.sku')}</th><th>${t('inv.format')}</th><th>${t('inv.type')}</th><th>${t('common.location')}</th><th class="num">${t('inv.onHand')}</th></tr></thead><tbody>
+        ${raw(l.candidates.map((c) => html`<tr><td data-l="${t('common.sku')}" class="mono">${c.sku || t('common.notRegistered')}</td><td data-l="${t('inv.format')}">${c.format}</td><td data-l="${t('inv.type')}">${c.sampleType} ${c.preferred ? raw(`<span class="badge orange">${esc(t('det.preferred'))}</span>`) : ''}</td><td data-l="${t('common.location')}">${c.location || '—'}</td><td data-l="${t('inv.onHand')}" class="num"><span class="${c.onHand <= 0 ? 'badge red' : ''}">${c.onHand}</span></td></tr>`.s).join(''))}</tbody></table></div>` : html`<div class="callout warn">${icon('alert')}<span>${t('det.noMatch')}</span></div>`}
     </div>`.s).join(''));
   }
 
@@ -144,18 +145,6 @@ export async function render(el, ctx) {
       if (!e.target.value) return;
       try { await api(`/requests/${encodeURIComponent(no)}/delivery-mode`, { method: 'POST', body: { mode: e.target.value } }); toast(t('common.saved'), 'ok'); reload(); } catch (err) { errToast(err); }
     });
-    // inventory
-    el.querySelectorAll('[data-reserve]').forEach((b) => b.addEventListener('click', () => busy(b, async () => {
-      const line = Number(b.closest('[data-line]').dataset.line);
-      const qty = Number(b.closest('tr').querySelector('[data-qty]').value);
-      await api('/inventory/reserve', { method: 'POST', body: { requestNo: no, line, itemId: b.dataset.reserve, qty, opKey: opKey() } });
-      toast(t('common.saved'), 'ok'); reload();
-    }).catch(() => {})));
-    el.querySelectorAll('[data-release]').forEach((b) => b.addEventListener('click', () => busy(b, async () => { await api('/inventory/release', { method: 'POST', body: { reservationId: b.dataset.release } }); reload(); }).catch(() => {})));
-    el.querySelectorAll('[data-issue]').forEach((b) => b.addEventListener('click', async () => {
-      if (!(await confirmDialog(t('det.issue') + '?'))) return;
-      busy(b, async () => { await api('/inventory/issue', { method: 'POST', body: { reservationId: b.dataset.issue, opKey: opKey() } }); toast(t('common.saved'), 'ok'); reload(); }).catch(() => {});
-    }));
     // uploaders
     el.querySelectorAll('[data-uploader]').forEach((u) => mountUploader(u, { requestNo: no, types: u.dataset.types.split(','), meta: ctx.meta, onSaved: reload }));
     const evRoot = el.querySelector('[data-body]');

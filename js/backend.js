@@ -16,7 +16,7 @@ import { findDuplicates } from './domain/duplicates.js';
 import * as finance from './domain/finance.js';
 import * as analytics from './domain/analytics.js';
 import { timeCtx } from './domain/metrics.js';
-import { norm, parseRequests, parseTracking, parseCatalog } from './domain/sheet-parse.js';
+import { norm, parseRequests, parseTracking, parseCatalog, parseOperation, parseInventoryMoves } from './domain/sheet-parse.js';
 import { applySourceSnapshot } from './domain/sync.js';
 import { localParts } from './domain/time.js';
 import { EMAIL_RE } from './domain/email.js';
@@ -208,7 +208,11 @@ async function importWorkbook(form) {
     for (let i = 0; i < rows.length; i++) if (!rows[i]) rows[i] = [];
     return rows;
   };
-  const snap = { requests: parseRequests(rowsOf('REQUESTS'), TZ), tracking: parseTracking(rowsOf('TRACKING'), TZ), catalog: parseCatalog(rowsOf('PRODUCTS')) };
+  const optional = (name, fn) => (wb.getWorksheet(name) ? fn(rowsOf(name)) : []);
+  const snap = {
+    requests: parseRequests(rowsOf('REQUESTS'), TZ), tracking: parseTracking(rowsOf('TRACKING'), TZ), catalog: parseCatalog(rowsOf('PRODUCTS')),
+    operation: optional('OPERATION DATA', parseOperation), moves: optional('MOVIMIENTOS INVENTARIO', (r) => parseInventoryMoves(r, TZ)),
+  };
   return store.mutate((d) => applySourceSnapshot(d, snap, `Import: ${form.get('file').name}`), 'IMPORT');
 }
 
@@ -312,8 +316,8 @@ on('GET', '/inventory', (q) => {
   return { items, physical, locations };
 });
 on('GET', '/inventory/movements', (q) => ({
-  movements: store.d.movements.filter((m) => !q.itemId || m.itemId === q.itemId).slice(-300).reverse()
-    .map((m) => ({ ...m, area: m.area === 'BODEGA' ? 'Warehouse' : m.area, item: store.d.inventory[m.itemId] ? `${store.d.inventory[m.itemId].model} · ${store.d.inventory[m.itemId].color}` : m.itemId })),
+  movements: store.d.movements.filter((m) => !q.itemId || m.itemId === q.itemId).slice().sort((x, y) => String(x.at).localeCompare(String(y.at))).slice(-300).reverse()
+    .map((m) => ({ ...m, area: m.area === 'BODEGA' ? 'Warehouse' : m.area, item: store.d.inventory[m.itemId] ? `${store.d.inventory[m.itemId].model} · ${store.d.inventory[m.itemId].color}` : [m.model, m.color].filter(Boolean).join(' · ') || m.itemId })),
 }));
 for (const op of ['reserve', 'release', 'issue']) on('POST', `/inventory/${op}`, (q, b) => store.mutate((d) => inventory[op](d, b, store.area), `INVENTORY_${op.toUpperCase()}`));
 

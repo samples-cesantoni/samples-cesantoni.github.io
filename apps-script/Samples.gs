@@ -99,25 +99,46 @@ function num(v) { return v === '' || v === null || v === undefined || isNaN(Numb
 function instante(v) {
   if (v === null || v === undefined || v === '') return null;
   if (Object.prototype.toString.call(v) === '[object Date]') return isNaN(v) ? null : v.toISOString();
-  var d = new Date(String(v)); return isNaN(d) ? null : d.toISOString();
+  var s = String(v).trim(), m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+  if (m) { // dd/mm/aaaa como la escribe la base, hora local de México (mediodía si no trae hora)
+    var guess = new Date(Date.UTC(+m[3], +m[2] - 1, +m[1], m[4] ? +m[4] : 12, m[5] ? +m[5] : 0));
+    var off = Number(Utilities.formatDate(guess, CONFIG.ZONA, 'Z')) ; var h = Math.trunc(off / 100), mi = off % 100;
+    return new Date(guess.getTime() - (h * 60 + mi) * 60000).toISOString();
+  }
+  var d = new Date(s); return isNaN(d) ? null : d.toISOString();
 }
-function evento(requestNo, texto) {
-  fsCreate('sc_eventos', rid('EVT'), { id: '', at: new Date().toISOString(), requestNo: requestNo, event: texto, area: 'System' });
-}
+function guia(v) { var t = str(v).toUpperCase().replace(/\s+/g, ''); return /^[A-Z0-9][A-Z0-9-]{5,39}$/.test(t) ? t : ''; }
+function diaLocal(iso) { return iso ? Utilities.formatDate(new Date(iso), CONFIG.ZONA, 'yyyy-MM-dd') : ''; }
 
 /* ------------------------------------------------------------------ lectura de la base original (mismos criterios que la plataforma) */
+// La base se tradujo al español: cada columna se acepta con su nombre en inglés o en español.
+var ALIAS = {
+  'DATE/TIME': ['FECHA / HORA'], 'REQUEST NO.': ['FOLIO'], 'LINE': ['LÍNEA'], 'FULL NAME': ['NOMBRE COMPLETO'], 'COMPANY': ['EMPRESA'], 'PHONE': ['TELÉFONO'],
+  'EMAIL': ['CORREO'], 'COUNTRY': ['PAÍS'], 'STATE/PROVINCE': ['ESTADO / PROVINCIA'], 'CITY': ['CIUDAD'], 'ZIP CODE': ['CÓDIGO POSTAL'], 'ADDRESS': ['DIRECCIÓN'],
+  'DELIVERY REFERENCES': ['REFERENCIAS DE ENTREGA'], 'MODEL': ['MODELO'], 'PIECE SIZE': ['TAMAÑO / TIPO DE MUESTRA'], 'NUMBER OF PIECES': ['NÚM. DE PIEZAS'],
+  'STATUS': ['ESTATUS (CÓDIGO)', 'ESTATUS'], 'NOTES': ['NOTAS'], 'REQUEST ID': ['ID SOLICITUD'], 'PREPARATION DATE': ['FECHA PREPARACIÓN'], 'SHIP DATE': ['FECHA ENVÍO'],
+  'DELIVERY DATE': ['FECHA ENTREGA'], 'TRACKING NO.': ['NÚM. GUÍA / TRACKING'], 'CARRIER': ['PAQUETERÍA'], 'DISPLAY': ['MOSTRAR'], 'SKU (OMITTED)': ['SKU (OMITIDO)'],
+  'SOURCE FORMAT': ['FORMATO ORIGEN'], 'SAMPLE TYPE': ['TIPO DE MUESTRA'], 'INVENTORY': ['INVENTARIO'], 'FORM LABEL': ['ETIQUETA WEB (INGLÉS)'],
+  'BACKUP MUEBLE / POSICIÓN': ['RESPALDO MUEBLE / POSICIÓN']
+};
+function nombres(h) { return [h].concat(ALIAS[h] || []).map(norm); }
 function encabezado(rows, req, desde) {
   desde = desde || 0;
   for (var r = 0; r < Math.min(rows.length, 15); r++) {
     var row = rows[r].map(norm), idx = {}, ok = true;
-    for (var i = 0; i < req.length; i++) { var p = row.indexOf(norm(req[i]), desde); if (p < 0) { ok = false; break; } idx[req[i]] = p; }
-    if (ok) { row.forEach(function (h, j) { if (h && idx[h] === undefined && j >= desde) idx[h] = j; }); return { fila: r, idx: idx }; }
+    var pos = function (h) { var n = nombres(h); for (var k = 0; k < n.length; k++) { var p = row.indexOf(n[k], desde); if (p >= 0) return p; } return -1; };
+    for (var i = 0; i < req.length; i++) { var p = pos(req[i]); if (p < 0) { ok = false; break; } idx[req[i]] = p; }
+    if (ok) {
+      Object.keys(ALIAS).forEach(function (h) { if (idx[h] === undefined) { var q = pos(h); if (q >= 0) idx[h] = q; } });
+      row.forEach(function (h, j) { if (h && idx[h] === undefined && j >= desde) idx[h] = j; });
+      return { fila: r, idx: idx };
+    }
   }
   return null;
 }
 function leerSolicitudes(rows) {
   var h = encabezado(rows, ['DATE/TIME', 'REQUEST NO.', 'LINE', 'FULL NAME', 'COMPANY', 'EMAIL', 'COUNTRY', 'ADDRESS', 'MODEL', 'COLOR', 'PIECE SIZE', 'NUMBER OF PIECES', 'STATUS', 'REQUEST ID']);
-  if (!h) throw new Error('REQUESTS: no se encontraron los encabezados esperados (¿cambió la estructura?)');
+  if (!h) throw new Error('SOLICITUDES: no se encontraron los encabezados esperados (¿cambió la estructura?)');
   var g = function (row, k) { return h.idx[k] === undefined ? '' : row[h.idx[k]]; }, porFolio = {}, orden = [];
   rows.slice(h.fila + 1).forEach(function (row) {
     var no = str(g(row, 'REQUEST NO.'));
@@ -137,13 +158,33 @@ function leerSolicitudes(rows) {
 }
 function leerSeguimiento(rows) {
   var h = encabezado(rows, ['REQUEST NO.', 'STATUS']); if (!h) return {};
-  var out = {};
-  rows.slice(h.fila + 1).forEach(function (row) { var no = str(row[h.idx['REQUEST NO.']]); if (/^[A-Z]+-\d+$/.test(no)) out[no] = { status: str(row[h.idx['STATUS']]), trackingNo: h.idx['TRACKING NO.'] === undefined ? '' : str(row[h.idx['TRACKING NO.']]) }; });
+  var g = function (row, k) { return h.idx[k] === undefined ? '' : row[h.idx[k]]; }, out = {};
+  rows.slice(h.fila + 1).forEach(function (row) {
+    var no = str(g(row, 'REQUEST NO.'));
+    if (/^[A-Z]+-\d+$/.test(no)) out[no] = { status: str(g(row, 'STATUS')), preparationDate: instante(g(row, 'PREPARATION DATE')), shipDate: instante(g(row, 'SHIP DATE')), deliveryDate: instante(g(row, 'DELIVERY DATE')), trackingNo: guia(g(row, 'TRACKING NO.')), notes: str(g(row, 'NOTES')) };
+  });
   return out;
+}
+function leerOperacion(rows) {
+  var h = encabezado(rows, ['REQUEST NO.', 'CARRIER']); if (!h) return {};
+  var out = {};
+  rows.slice(h.fila + 1).forEach(function (row) { var no = str(row[h.idx['REQUEST NO.']]); if (/^[A-Z]+-\d+$/.test(no)) out[no] = { carrier: str(row[h.idx['CARRIER']]).toUpperCase(), trackingNo: h.idx['TRACKING NO.'] === undefined ? '' : guia(row[h.idx['TRACKING NO.']]) }; });
+  return out;
+}
+// Descuentos de inventario que aplica la base por folio (la plataforma nunca descuenta otra vez).
+function leerMovimientos(rows) {
+  var h = encabezado(rows, ['FECHA', 'FOLIO', 'MODELO', 'CANTIDAD']); if (!h) return [];
+  var g = function (row, k) { return h.idx[k] === undefined ? '' : row[h.idx[k]]; };
+  return rows.slice(h.fila + 1).filter(function (r) { return /^[A-Z]+-\d+$/.test(str(g(r, 'FOLIO'))) && str(g(r, 'MODELO')) && num(g(r, 'CANTIDAD')) > 0; }).map(function (row) {
+    var m = { at: instante(g(row, 'FECHA')), requestNo: str(g(row, 'FOLIO')), model: str(g(row, 'MODELO')), color: str(g(row, 'COLOR')), sampleType: str(g(row, 'TIPO DESCONTADO')),
+      qty: num(g(row, 'CANTIDAD')) || 0, location: str(g(row, 'UBICACIÓN')), before: num(g(row, 'INVENTARIO ANTERIOR')), after: num(g(row, 'INVENTARIO NUEVO')), note: str(g(row, 'NOTA')) };
+    m.id = 'MOV-SRC-' + sha1([m.requestNo, m.model, m.color, m.sampleType, m.qty, m.location, m.before, m.after].map(norm).join('|')).slice(0, 16);
+    return m;
+  });
 }
 function leerCatalogo(rows) {
   var h = encabezado(rows, ['DISPLAY', 'MODEL', 'COLOR', 'SOURCE FORMAT', 'SAMPLE TYPE', 'INVENTORY', 'MUEBLE / POSICIÓN']);
-  if (!h) throw new Error('PRODUCTS: no se encontraron los encabezados del catálogo');
+  if (!h) throw new Error('PRODUCTOS: no se encontraron los encabezados del catálogo');
   var items = [], vistos = {};
   rows.slice(h.fila + 1).forEach(function (row) {
     var g = function (k) { return h.idx[k] === undefined ? '' : row[h.idx[k]]; };
@@ -154,60 +195,115 @@ function leerCatalogo(rows) {
       model: model, color: str(g('COLOR')), format: str(g('SOURCE FORMAT')), sampleType: str(g('SAMPLE TYPE')), formLabel: str(g('FORM LABEL')),
       onHand: num(g('INVENTORY')) || 0, location: str(g('MUEBLE / POSICIÓN')), backupLocation: str(g('BACKUP MUEBLE / POSICIÓN')), display: g('DISPLAY') === true || norm(g('DISPLAY')) === 'TRUE' });
   });
-  var p = encabezado(rows, ['MUEBLE', 'POSICIÓN', 'MODELO', 'INVENTARIO'], (h.idx['MUEBLE / POSICIÓN'] || 0) + 1), fisico = [];
+  var desde = Math.max(h.idx['MUEBLE / POSICIÓN'] || 0, h.idx['BACKUP MUEBLE / POSICIÓN'] || 0) + 1;
+  var p = encabezado(rows, ['MUEBLE', 'POSICIÓN', 'MODELO', 'INVENTARIO'], desde), fisico = [];
   if (p) rows.slice(p.fila + 1).forEach(function (row) {
     var g = function (k) { return p.idx[k] === undefined ? '' : row[p.idx[k]]; };
     if (!str(g('MODELO'))) return;
-    fisico.push({ cabinet: str(g('MUEBLE')), position: str(g('POSICIÓN')), model: str(g('MODELO')), color: str(g('COLOR')), finish: str(g('ACABADO')), quantity: num(g('INVENTARIO')), sampleSize: str(g('TAMAÑO DE MUESTRA')), backupLocation: str(g('BACKUP MUEBLE / POSICIÓN')), status: str(g('STATUS')) });
+    fisico.push({ cabinet: str(g('MUEBLE')), position: str(g('POSICIÓN')), model: str(g('MODELO')), color: str(g('COLOR')), finish: str(g('ACABADO')), quantity: num(g('INVENTARIO')), sampleSize: str(g('TAMAÑO DE MUESTRA')), backupLocation: str(g('BACKUP MUEBLE / POSICIÓN')), status: str(g('STATUS')) || str(g('ESTATUS')) });
   });
   return { items: items, fisico: fisico };
 }
 
 /* ------------------------------------------------------------------ 1. sincronización */
+var ESTATUS = ['RECEIVED', 'PREPARING', 'PREPARED', 'READY_FOR_PICKUP', 'SHIPPED', 'IN_TRANSIT', 'DELIVERED', 'ON_HOLD', 'CANCELLED'];
+var FECHA_DE = { PREPARED: 'preparationDate', SHIPPED: 'shipDate', DELIVERED: 'deliveryDate' };
+var PAQ = ['FEDEX', 'UPS', 'DHL', 'USPS', 'ESTAFETA', 'PAQUETEXPRESS'];
+function estatusValido(s) { s = String(s || '').toUpperCase(); return ESTATUS.indexOf(s) >= 0 ? s : null; }
+function nuevoEvento(no, texto, at) { var e = rid('EVT'); fsCreate('sc_eventos', e, { id: e, at: at, requestNo: no, event: texto, area: 'System' }); }
+
 function sincronizar() {
   var lock = LockService.getScriptLock(); if (!lock.tryLock(30000)) return;
   try {
-    var ss = SpreadsheetApp.openById(CONFIG.FUENTE_ID), valores = function (n) { var sh = ss.getSheetByName(n); if (!sh) throw new Error('No existe la hoja ' + n); return sh.getDataRange().getValues(); };
-    var solicitudes = leerSolicitudes(valores('REQUESTS')), seguimiento = leerSeguimiento(valores('TRACKING')), cat = leerCatalogo(valores('PRODUCTS'));
-    var meta = fsGet('sc_config', 'meta') || {}, hashes = meta.hashes || {}, res = { creadas: 0, actualizadas: 0, conflictos: 0, articulos: 0 };
+    var ss = SpreadsheetApp.openById(CONFIG.FUENTE_ID);
+    var hoja = function (n, opcional) { var sh = ss.getSheetByName(n); if (!sh) { if (opcional) return null; throw new Error('No existe la hoja ' + n); } return sh.getDataRange().getValues(); };
+    var solicitudes = leerSolicitudes(hoja('REQUESTS')), seguimiento = leerSeguimiento(hoja('TRACKING')), cat = leerCatalogo(hoja('PRODUCTS'));
+    var opV = hoja('OPERATION DATA', true), mvV = hoja('MOVIMIENTOS INVENTARIO', true);
+    var operacion = opV ? leerOperacion(opV) : {}, movimientos = mvV ? leerMovimientos(mvV) : [];
+    var meta = fsGet('sc_config', 'meta') || {}, hashes = meta.hashes || {}, res = { creadas: 0, actualizadas: 0, estatus: 0, conflictos: 0, articulos: 0, existencias: 0, descuentos: 0 };
     var ahora = new Date().toISOString(), fuente = 'Google Sheets: Base Sample Request CESANTONI - English';
     solicitudes.forEach(function (r) {
-      var h = sha1(JSON.stringify(r)); if (hashes[r.requestNo] === h) return;
-      var t = seguimiento[r.requestNo] || {}, email = r.customer.email; delete r.customer.email;
-      var previa = fsGet('sc_solicitudes', r.requestNo);
+      var t = seguimiento[r.requestNo] || {}, op = operacion[r.requestNo] || {};
+      var h = sha1(JSON.stringify([r, t, op])); if (hashes[r.requestNo] === h) return;
+      var email = r.customer.email; delete r.customer.email;
+      var notas = [r.sourceNotes, t.notes].filter(function (x, i, a) { return x && a.indexOf(x) === i; }).join(' · ');
+      var estado = estatusValido(t.status) || estatusValido(r.sourceStatus) || 'RECEIVED';
+      var campos = { requestId: r.requestId, createdAt: r.createdAt, customer: r.customer, country: r.country, state: r.state, city: r.city, zip: r.zip, address: r.address, deliveryRefs: r.deliveryRefs, lines: r.lines, sourceNotes: notas };
+      var previa = fsGet('sc_solicitudes', r.requestNo), doc;
+      if (previa && previa.requestId && r.requestId && previa.requestId !== r.requestId) {
+        res.conflictos++;
+        var c = rid('SYN'); fsCreate('sc_sync', c, { id: c, at: ahora, requestNo: r.requestNo, action: 'CONFLICT', detail: 'Same request number with a different REQUEST ID — not overwritten', source: fuente });
+        return;
+      }
       if (!previa) {
-        var estado = ['RECEIVED', 'PREPARING', 'PREPARED', 'READY_FOR_PICKUP', 'SHIPPED', 'IN_TRANSIT', 'DELIVERED', 'ON_HOLD', 'CANCELLED'].indexOf(String(t.status || r.sourceStatus).toUpperCase()) >= 0 ? String(t.status || r.sourceStatus).toUpperCase() : 'RECEIVED';
-        var doc = { requestNo: r.requestNo, requestId: r.requestId, createdAt: r.createdAt, customer: r.customer, country: r.country, state: r.state, city: r.city, zip: r.zip, address: r.address, deliveryRefs: r.deliveryRefs, lines: r.lines, sourceNotes: r.sourceNotes,
-          status: estado, deliveryMode: null, statusDates: { RECEIVED: r.createdAt || ahora }, statusChangedAt: r.createdAt || ahora, observations: [], syncedAt: ahora, source: fuente };
+        doc = Object.assign({ requestNo: r.requestNo }, campos, { status: estado, sourceStatus: estado, deliveryMode: null, statusDates: { RECEIVED: r.createdAt || ahora }, statusChangedAt: r.createdAt || ahora, observations: [], syncedAt: ahora, source: fuente });
+      } else {
+        doc = previa; Object.keys(campos).forEach(function (k) { doc[k] = campos[k]; }); doc.syncedAt = ahora;
+        if (doc.sourceStatus !== estado) { // la base cambió el estatus: se aplica y queda en el historial
+          if (doc.status !== estado) {
+            var de = doc.status; doc.status = estado; doc.statusChangedAt = ahora;
+            var hid = rid('STH'); fsCreate('sc_historial', hid, { id: hid, requestNo: r.requestNo, from: de, to: estado, at: ahora, area: 'SYSTEM', notes: 'Updated from Sample Request base', exception: null });
+            nuevoEvento(r.requestNo, 'Status updated from Sample Request base: ' + de + ' → ' + estado, ahora); res.estatus++;
+          }
+          doc.sourceStatus = estado;
+        }
+      }
+      doc.statusDates = doc.statusDates || {};
+      Object.keys(FECHA_DE).forEach(function (st) { if (t[FECHA_DE[st]] && !doc.statusDates[st]) doc.statusDates[st] = t[FECHA_DE[st]]; });
+      var guiaNo = op.trackingNo || t.trackingNo || '';
+      if (guiaNo || op.carrier || t.deliveryDate) {
+        var envio = fsGet('sc_envios', r.requestNo), s = envio ? JSON.parse(JSON.stringify(envio)) : { requestNo: r.requestNo };
+        if (!s.trackingNo && guiaNo) s.trackingNo = guiaNo;
+        if (!s.carrier && op.carrier) s.carrier = PAQ.indexOf(op.carrier) >= 0 ? op.carrier : 'OTHER';
+        if (s.carrier === 'OTHER' && !s.otherCarrierName && op.carrier) s.otherCarrierName = op.carrier;
+        if (!s.carrier && /^1Z[0-9A-Z]{16}$/.test(s.trackingNo || '')) s.carrier = 'UPS';
+        if (!s.shipDate && t.shipDate) s.shipDate = diaLocal(t.shipDate);
+        if (!s.deliveredAt && t.deliveryDate) s.deliveredAt = t.deliveryDate;
+        if (s.carrier === 'UPS' && s.trackingNo && !s.trackingUrl) s.trackingUrl = 'https://www.ups.com/track?tracknum=' + encodeURIComponent(s.trackingNo);
+        s.source = s.source || 'Sample Request base';
+        if (!envio) fsCreate('sc_envios', r.requestNo, s); else fsReplace('sc_envios', r.requestNo, s, envio);
+        if (!doc.deliveryMode && (s.trackingNo || s.carrier)) doc.deliveryMode = 'COURIER';
+      }
+      if (!previa) {
         if (fsCreate('sc_solicitudes', r.requestNo, doc)) {
           fsCreate('sc_contactos', r.requestNo, { email: email });
           fsCreate('sc_historial', 'STH-SRC-' + r.requestNo, { id: 'STH-SRC-' + r.requestNo, requestNo: r.requestNo, from: null, to: estado, at: r.createdAt || ahora, area: 'SYSTEM', notes: 'Imported from Sample Request base', exception: null });
-          var e = rid('EVT'); fsCreate('sc_eventos', e, { id: e, at: r.createdAt || ahora, requestNo: r.requestNo, event: 'Request received', area: 'System' });
-          if (t.trackingNo) fsCreate('sc_envios', r.requestNo, { requestNo: r.requestNo, trackingNo: t.trackingNo, carrier: '', source: 'TRACKING sheet' });
-          res.creadas++;
+          nuevoEvento(r.requestNo, 'Request received', r.createdAt || ahora); res.creadas++;
         }
-      } else if (previa.requestId && r.requestId && previa.requestId !== r.requestId) {
-        res.conflictos++;
-        var s = rid('SYN'); fsCreate('sc_sync', s, { id: s, at: ahora, requestNo: r.requestNo, action: 'CONFLICT', detail: 'Same request number with a different REQUEST ID — not overwritten', source: fuente });
-        return;
       } else {
-        ['requestId', 'createdAt', 'customer', 'country', 'state', 'city', 'zip', 'address', 'deliveryRefs', 'lines', 'sourceNotes'].forEach(function (k) { previa[k] = r[k]; });
-        previa.syncedAt = ahora;
-        fsReplace('sc_solicitudes', r.requestNo, previa, previa);
-        var c = fsGet('sc_contactos', r.requestNo); if (!c || c.email !== email) fsReplace('sc_contactos', r.requestNo, { email: email }, c);
+        fsReplace('sc_solicitudes', r.requestNo, doc, previa);
+        var c2 = fsGet('sc_contactos', r.requestNo); if (!c2 || c2.email !== email) fsReplace('sc_contactos', r.requestNo, { email: email }, c2);
         res.actualizadas++;
       }
       hashes[r.requestNo] = h;
     });
+    // Inventario: la base manda (descuenta por folio). Nunca se borra un artículo.
     var hc = sha1(JSON.stringify(cat));
     if (meta.catalogo !== hc) {
-      cat.items.forEach(function (it) { it.sourceOnHand = it.onHand; it.inSource = true; it.importedAt = ahora; if (fsCreate('sc_inventario', it.itemId, it)) res.articulos++; });
+      var actuales = {}; fsList('sc_inventario').forEach(function (x) { actuales[x.__id] = x; });
+      cat.items.forEach(function (it) {
+        var ex = actuales[it.itemId];
+        if (!ex) { it.sourceOnHand = it.onHand; it.reserved = 0; it.inSource = true; it.importedAt = ahora; if (fsCreate('sc_inventario', it.itemId, it)) res.articulos++; return; }
+        var cambio = ['sku', 'model', 'color', 'format', 'sampleType', 'formLabel', 'onHand', 'location', 'backupLocation', 'display'].some(function (k) { return JSON.stringify(ex[k]) !== JSON.stringify(it[k]); }) || ex.inSource !== true;
+        if (cambio) { var nx = JSON.parse(JSON.stringify(ex)); Object.keys(it).forEach(function (k) { nx[k] = it[k]; }); nx.sourceOnHand = it.onHand; nx.inSource = true; fsReplace('sc_inventario', it.itemId, nx, ex); res.existencias++; }
+      });
       if (cat.fisico.length) fsReplace('sc_config', 'fisico', { rows: cat.fisico }, fsGet('sc_config', 'fisico'));
       meta.catalogo = hc;
     }
+    // Descuentos de la base como movimientos del folio (id determinista: no se duplican).
+    var hm = sha1(JSON.stringify(movimientos));
+    if (meta.movimientos !== hm) {
+      var inv = fsList('sc_inventario');
+      movimientos.forEach(function (m) {
+        var c = inv.filter(function (i) { return norm(i.model) === norm(m.model) && norm(i.color) === norm(m.color); });
+        var it = c.filter(function (i) { return norm(i.location) === norm(m.location) && norm(i.sampleType) === norm(m.sampleType); })[0] || c.filter(function (i) { return norm(i.location) === norm(m.location); })[0] || c[0];
+        if (fsCreate('sc_movimientos', m.id, { id: m.id, at: m.at || ahora, type: 'ISSUE', itemId: it ? it.__id : null, qty: m.qty, requestNo: m.requestNo, area: 'SYSTEM', source: 'BASE', model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, before: m.before, after: m.after, note: m.note || 'Deducted by the Sample Request base' })) res.descuentos++;
+      });
+      meta.movimientos = hm;
+    }
     meta.hashes = hashes; meta.lastSync = ahora; meta.source = fuente;
     fsReplace('sc_config', 'meta', meta, fsGet('sc_config', 'meta'));
-    if (res.creadas || res.actualizadas || res.conflictos || res.articulos) { var y = rid('SYN'); fsCreate('sc_sync', y, { id: y, at: ahora, requestNo: null, action: 'SYNC', detail: JSON.stringify(res), source: fuente }); }
+    if (res.creadas || res.actualizadas || res.estatus || res.conflictos || res.articulos || res.existencias || res.descuentos) { var y = rid('SYN'); fsCreate('sc_sync', y, { id: y, at: ahora, requestNo: null, action: 'SYNC', detail: JSON.stringify(res), source: fuente }); }
     return res;
   } finally { lock.releaseLock(); }
 }

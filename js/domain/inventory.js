@@ -23,16 +23,19 @@ function candidates(d, line) {
     .sort((a, b) => Number(b.preferred) - Number(a.preferred) || b.available - a.available);
 }
 
+// Per requested line: what the base already deducted (MOVIMIENTOS INVENTARIO), where it came from,
+// matching catalog items and whether there is a shortage. The platform itself never deducts stock.
+const lineKey = (model, color) => norm(`${model || ''} ${color || ''}`);
 function lineAllocation(d, requestNo) {
   const req = d.requests[requestNo];
+  const baseMoves = d.movements.filter((m) => m.source === 'BASE' && m.requestNo === requestNo);
   return req.lines.map((line) => {
-    const res = d.reservations.filter((r) => r.requestNo === requestNo && r.line === line.line && r.state !== 'RELEASED');
+    const deductions = baseMoves.filter((m) => lineKey(m.model, m.color) === lineKey(line.model, line.color) || (norm(m.model) === norm(line.model) && !line.color));
+    const deductedQty = deductions.reduce((s, m) => s + (m.qty || 0), 0);
     const cands = candidates(d, line);
-    const reservedQty = res.reduce((s, r) => s + r.qty, 0);
-    const best = cands[0];
-    const location = res[0] ? d.inventory[res[0].itemId]?.location : best?.location || '';
-    const shortage = reservedQty < line.pieces && !cands.some((c) => c.available >= line.pieces - reservedQty);
-    return { ...line, reservations: res, reservedQty, candidates: cands.slice(0, 6), location, shortage };
+    const location = deductions[0]?.location || cands[0]?.location || '';
+    const shortage = deductedQty < line.pieces && !cands.some((c) => c.available >= line.pieces - deductedQty);
+    return { ...line, deductions, deductedQty, reservations: [], reservedQty: deductedQty, candidates: cands.slice(0, 6), location, shortage };
   });
 }
 
