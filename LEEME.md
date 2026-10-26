@@ -40,12 +40,19 @@ Igual que proveedores y movimientos:
 
 | Perfil | Qué hace | Qué no puede (bloqueado por las reglas, no solo oculto) |
 |---|---|---|
-| Bodega (ARMEX) | Captura rápida, evidencias con cámara, inventario (reservar y dar salida), guías con OCR, entregas, QR y etiquetas | Cambiar estatus, aprobar evidencias, leer costos, facturas, correos del cliente o avisos, subir existencias, borrar bitácora |
+| Bodega (ARMEX) | Captura rápida, evidencias con cámara, carga masiva de evidencias (ZIP con una carpeta por folio), inventario (reservar y dar salida), guías con OCR, entregas, QR y etiquetas | Cambiar estatus, aprobar evidencias, leer costos, facturas, correos del cliente o avisos, subir existencias, borrar bitácora |
 | CESANTONI | Todo lo anterior, más dashboard, validación, estatus oficial, correos, avisos, facturación USD, reportes y expedientes con finanzas | Dar de alta usuarios ni activar correos en producción |
 | CESANTONI · administrador | Todo, más usuarios por área y activar el envío real a clientes | — |
 
 En pantallas, PDF, Excel, etiquetas y correos solo aparece el área (CESANTONI / Warehouse / System), nunca el nombre de una persona.
 El registro técnico de quién hizo qué se guarda en `sc_seguridad`, que solo leen los administradores desde la consola.
+
+## Carga masiva de evidencias
+
+*Operación › Carga masiva de evidencias* recibe un ZIP con una carpeta por folio (`SMCES-005` o `SMCES-0005`) o varias fotos sueltas.
+- El folio sale del nombre de la carpeta o del archivo; el tipo, de palabras en el nombre (guía/etiqueta, caja, embalaje, material, preparación…). Donde falte, se elige en la tabla.
+- Las etiquetas de paquetería se leen en el mismo equipo (OCR): se reconocen como foto de guía, se muestra la guía y la referencia impresa. Si la referencia es de otro folio, la foto no se sube hasta confirmar el folio.
+- Una foto que ya se subió al mismo folio y tipo se salta sola, aunque se vuelva a cargar el mismo ZIP.
 
 ## Capacidad (plan gratuito de Firebase, compartido con proveedores y movimientos)
 

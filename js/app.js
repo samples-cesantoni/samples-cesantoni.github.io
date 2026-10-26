@@ -9,6 +9,7 @@ const VIEWS = {
   request: () => import('./views/request-detail.js'),
   inventory: () => import('./views/inventory.js'),
   capture: () => import('./views/capture.js'),
+  bulk: () => import('./views/bulk.js'),
   validation: () => import('./views/validation.js'),
   status: () => import('./views/status.js'),
   shipments: () => import('./views/shipments.js'),
@@ -26,13 +27,13 @@ const VIEWS = {
 // Menu per area. The server enforces the same rules; this only shapes navigation.
 const MENU = {
   CESANTONI: [
-    ['nav.operation', [['dashboard', 'dashboard'], ['requests', 'requests'], ['inventory', 'inventory'], ['shipments', 'truck'], ['labels', 'qr']]],
+    ['nav.operation', [['dashboard', 'dashboard'], ['requests', 'requests'], ['bulk', 'upload'], ['inventory', 'inventory'], ['shipments', 'truck'], ['labels', 'qr']]],
     ['nav.control', [['validation', 'shield'], ['status', 'status'], ['notices', 'bell'], ['emails', 'mail'], ['alerts', 'alert'], ['duplicates', 'copy']]],
     ['nav.finance', [['billing', 'invoice'], ['reports', 'chart']]],
     ['nav.admin', [['activity', 'log'], ['settings', 'settings']]],
   ],
   BODEGA: [
-    ['nav.operation', [['capture', 'capture'], ['requests', 'requests'], ['inventory', 'inventory'], ['shipments', 'truck'], ['labels', 'qr'], ['alerts', 'alert']]],
+    ['nav.operation', [['capture', 'capture'], ['bulk', 'upload'], ['requests', 'requests'], ['inventory', 'inventory'], ['shipments', 'truck'], ['labels', 'qr'], ['alerts', 'alert']]],
   ],
 };
 const HOME = { CESANTONI: 'dashboard', BODEGA: 'capture' };

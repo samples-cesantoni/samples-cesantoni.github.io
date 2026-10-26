@@ -323,6 +323,8 @@ for (const op of ['reserve', 'release', 'issue']) on('POST', `/inventory/${op}`,
 
 on('POST', '/files', (q, b, p, form) => uploadFile(form));
 on('POST', '/evidence', (q, b) => store.mutate((d) => evidence.addEvidence(d, b, store.area), 'EVIDENCE_ADD'));
+// Bulk upload: which operation keys were already saved (the same photo is never uploaded twice).
+on('POST', '/evidence/known', (q, b) => ({ known: (b.keys || []).filter((k) => store.d.operations[k]) }));
 on('POST', '/evidence/:id/review', (q, b, [id]) => store.mutate((d) => evidence.reviewEvidence(d, { ...b, evidenceId: id }, 'CESANTONI'), 'EVIDENCE_REVIEW'), ces);
 on('GET', '/validation', (q) => {
   const st = q.state || 'PENDING';
