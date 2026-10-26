@@ -74,7 +74,7 @@ export async function render(el, ctx) {
       const m = modal({ title: `${t('cap.qr')} · ${det.requestNo}`, body: html`<div class="checklist">${raw(det.lines.map((l) => `<div class="item"><span class="lbl">${l.line}. ${esc(l.model)} · ${esc(l.color)}</span><button class="btn btn-dark btn-sm" data-q="${l.line}">${icon('download').s} QR PNG</button></div>`).join(''))}</div><p class="small" style="margin-top:12px"><a href="#/labels?request=${encodeURIComponent(det.requestNo)}">${t('lb.labelPng')} / ${t('lb.print')} →</a></p>`.s });
       m.body.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', async () => {
         const l = det.lines.find((x) => x.line === Number(b.dataset.q));
-        const c = document.createElement('canvas'); drawQr(c, qrText({ requestNo: det.requestNo, ...l }), 900);
+        const c = document.createElement('canvas'); drawQr(c, qrText({ kind: 'jr', requestNo: det.requestNo, ...l }), 900);
         await canvasToPng(c, `${det.requestNo}_L${l.line}_QR.png`);
       }));
     }

@@ -145,6 +145,11 @@ export async function render(el, ctx) {
       if (!e.target.value) return;
       try { await api(`/requests/${encodeURIComponent(no)}/delivery-mode`, { method: 'POST', body: { mode: e.target.value } }); toast(t('common.saved'), 'ok'); reload(); } catch (err) { errToast(err); }
     });
+    // QR of a Jr label: open the inventory tab on that product line
+    if (tab === 'inventory' && ctx.query.line) {
+      const card = el.querySelector(`[data-line="${CSS.escape(ctx.query.line)}"]`);
+      if (card) { card.classList.add('focus-line'); setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50); }
+    }
     // uploaders
     el.querySelectorAll('[data-uploader]').forEach((u) => mountUploader(u, { requestNo: no, types: u.dataset.types.split(','), meta: ctx.meta, onSaved: reload }));
     const evRoot = el.querySelector('[data-body]');

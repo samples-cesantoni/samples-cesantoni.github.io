@@ -335,3 +335,5 @@ pre.qr-text { background: #FAFAF8; border: 1px solid var(--line); border-radius:
   #print-root img { display: block; }
 }
 a > svg, .small > svg, .callout a svg { width: 16px; height: 16px; vertical-align: -3px; }
+
+.focus-line { outline: 3px solid var(--accent, #C5532E); outline-offset: 2px; }
