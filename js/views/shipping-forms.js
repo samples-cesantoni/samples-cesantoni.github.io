@@ -16,14 +16,17 @@ export function trackingForm(el, { det, ctx, onSaved }) {
     ${area === 'CESANTONI' ? html`<label class="field"><span>${t('sh.estimated')}</span><input class="input" type="date" name="estimatedDate" value="${s.estimatedDate || ''}"></label><label class="check" style="align-self:end"><input type="checkbox" name="estimateConfirmed" ${s.estimateConfirmed ? 'checked' : ''}><span>${t('sh.estimateConfirmed')}</span></label>` : ''}
     <label class="field" style="grid-column:1/-1"><span>${t('common.notes')}</span><input class="input" name="notes" value="${s.notes || ''}"></label>
     <div style="grid-column:1/-1"><label class="btn btn-ghost">${icon('scan')}${t('sh.ocr')}<input type="file" accept="image/*" capture="environment" hidden data-ocr></label><div data-ocrout class="small" style="margin-top:8px"></div></div>
-    <label class="check" style="grid-column:1/-1"><input type="checkbox" name="trackingConfirmed"><span>${t('sh.confirm')}</span></label>
+    <label class="check" style="grid-column:1/-1" data-confirm hidden><input type="checkbox" name="trackingConfirmed"><span>${t('sh.confirm')}</span></label>
     <div style="grid-column:1/-1;display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap;align-items:center">
       <span class="small">${s.trackingUrl ? html`<a href="${s.trackingUrl}" target="_blank" rel="noopener noreferrer">${icon('link')} ${t('sh.track')}</a>` : s.trackingNo ? t('sh.noUrl') : ''}</span>
       <button class="btn btn-primary" type="submit">${icon('check')}${t('sh.saveShip')}</button></div>
   </form>`.s;
   const f = el.querySelector('form');
   f.carrier.addEventListener('change', () => { el.querySelector('[data-other]').hidden = f.carrier.value !== 'OTHER'; });
-  f.trackingNo.addEventListener('input', () => { f.trackingConfirmed.checked = false; });
+  // A number typed by hand counts as verified; only a number picked from the OCR asks for the check.
+  let fromOcr = false;
+  const confirmBox = el.querySelector('[data-confirm]');
+  f.trackingNo.addEventListener('input', () => { fromOcr = false; confirmBox.hidden = true; });
   el.querySelector('[data-ocr]').addEventListener('change', async (e) => {
     const file = e.target.files[0]; e.target.value = '';
     if (!file) return;
@@ -34,14 +37,14 @@ export function trackingForm(el, { det, ctx, onSaved }) {
       const { candidates } = await ocrTracking(n.canvas || file);
       if (!candidates.length) { out.textContent = t('sh.ocrNone'); return; }
       out.innerHTML = `${esc(t('sh.ocrPick'))}<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${candidates.map((c) => `<button type="button" class="btn btn-ghost btn-sm mono" data-cand="${esc(c)}">${esc(c)}</button>`).join('')}</div>`;
-      out.querySelectorAll('[data-cand]').forEach((b) => b.addEventListener('click', () => { f.trackingNo.value = b.dataset.cand; f.trackingConfirmed.checked = false; f.trackingNo.focus(); }));
+      out.querySelectorAll('[data-cand]').forEach((b) => b.addEventListener('click', () => { f.trackingNo.value = b.dataset.cand; fromOcr = true; confirmBox.hidden = false; f.trackingConfirmed.checked = false; }));
     } catch (err) { out.textContent = `${t('sh.ocrNone')} (${err.message})`; }
   });
   f.addEventListener('submit', (e) => {
     e.preventDefault();
-    const body = { carrier: f.carrier.value, otherCarrierName: f.otherCarrierName.value, trackingNo: f.trackingNo.value.trim(), shipDate: f.shipDate.value, deliveryMethod: f.deliveryMethod.value, notes: f.notes.value, trackingConfirmed: f.trackingConfirmed.checked };
+    const body = { carrier: f.carrier.value, otherCarrierName: f.otherCarrierName.value, trackingNo: f.trackingNo.value.trim(), shipDate: f.shipDate.value, deliveryMethod: f.deliveryMethod.value, notes: f.notes.value, trackingConfirmed: !fromOcr || f.trackingConfirmed.checked };
     if (area === 'CESANTONI') { body.estimatedDate = f.estimatedDate.value; body.estimateConfirmed = f.estimateConfirmed.checked; }
-    if (body.trackingNo && body.trackingNo.toUpperCase() !== (s.trackingNo || '') && !body.trackingConfirmed) { toast(t('sh.confirm'), 'err'); f.trackingConfirmed.focus(); return; }
+    if (body.trackingNo && body.trackingNo.toUpperCase() !== (s.trackingNo || '') && !body.trackingConfirmed) { toast(t('sh.confirmNeeded'), 'err'); f.trackingConfirmed.focus(); return; }
     if (body.trackingNo.toUpperCase() === (s.trackingNo || '')) body.trackingConfirmed = true; // unchanged, already verified
     busy(f.querySelector('[type=submit]'), async () => { await api(`/requests/${encodeURIComponent(det.requestNo)}/shipment`, { method: 'PUT', body }); toast(t('common.saved'), 'ok'); onSaved?.(); }).catch(() => {});
   });
