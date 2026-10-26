@@ -18,12 +18,13 @@ export async function render(el, ctx) {
     const list = el.querySelector('[data-list]');
     if (!requests.length) { list.innerHTML = emptyState().s; return; }
     const details = await Promise.all(requests.map((r) => api(`/requests/${encodeURIComponent(r.requestNo)}`)));
-    list.innerHTML = html`<div class="table-wrap"><table class="t cards"><thead><tr><th>${t('common.request')}</th><th>${t('common.mode')}</th><th>${t('common.carrier')}</th><th>${t('sh.tracking')}</th><th>${t('sh.shipDate')}</th><th>${t('sh.estimated')}</th><th>${t('sh.deliveredAt')}</th><th>${t('common.status')}</th><th></th></tr></thead><tbody>
+    list.innerHTML = html`<div class="table-wrap"><table class="t cards"><thead><tr><th>${t('common.request')}</th><th>${t('common.mode')}</th><th>${t('common.carrier')}</th><th>${t('sh.tracking')}</th><th>${t('sh.carrierStatus')}</th><th>${t('sh.shipDate')}</th><th>${t('sh.estimated')}</th><th>${t('sh.deliveredAt')}</th><th>${t('common.status')}</th><th></th></tr></thead><tbody>
       ${raw(details.map((d) => { const s = d.shipment || {}; return html`<tr>
         <td data-l="${t('common.request')}"><a class="strong" href="#/requests/${encodeURIComponent(d.requestNo)}?tab=ship">${d.requestNo}</a><div class="small muted">${d.company}</div></td>
         <td data-l="${t('common.mode')}">${modeLabel(d.deliveryMode)}</td>
         <td data-l="${t('common.carrier')}">${s.carrier ? (s.carrier === 'OTHER' ? s.otherCarrierName : ctx.meta.carriers[s.carrier]?.name) : '—'}</td>
         <td data-l="${t('sh.tracking')}" class="mono">${s.trackingNo ? (s.trackingUrl ? raw(`<a href="${esc(s.trackingUrl)}" target="_blank" rel="noopener noreferrer">${esc(s.trackingNo)}</a>`) : s.trackingNo) : '—'}</td>
+        <td data-l="${t('sh.carrierStatus')}">${raw(carrierStatus(s))}</td>
         <td data-l="${t('sh.shipDate')}">${s.shipDate ? fmtDay(s.shipDate) : '—'}</td>
         <td data-l="${t('sh.estimated')}">${s.estimatedDate ? raw(`${esc(fmtDay(s.estimatedDate))} <span class="badge ${s.estimateConfirmed ? 'blue' : ''}">${s.estimateConfirmed ? 'carrier' : 'estimate'}</span>`) : '—'}</td>
         <td data-l="${t('sh.deliveredAt')}">${s.deliveredAt ? fmtDate(s.deliveredAt) : '—'}</td>
@@ -41,4 +42,11 @@ export async function render(el, ctx) {
   form.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(load, 300); });
   form.addEventListener('submit', (e) => e.preventDefault());
   await load();
+}
+
+// Latest status reported by the carrier (UPS, read every 30 min by the Apps Script), e.g. "26 oct 2026 [In Transit]".
+export function carrierStatus(s) {
+  const c = s && s.carrierStatus;
+  if (!c || !c.description) return '—';
+  return `${c.at ? esc(fmtDay(c.at.slice(0, 10))) + ' ' : ''}<span class="badge ${c.type === 'D' ? 'green' : c.type === 'X' ? 'red' : 'blue'}">${esc(c.description)}</span>${c.location ? `<div class="small muted">${esc(c.location)}</div>` : ''}`;
 }

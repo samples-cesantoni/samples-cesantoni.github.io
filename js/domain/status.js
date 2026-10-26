@@ -99,7 +99,8 @@ function changeStatus(ctx, { requestNo, to, notes, notify, opKey, exceptionReaso
 
 // Automatic status: once a request has its tracking number AND a shipping label photo,
 // it moves to Shipped by itself (whoever captured the last of the two). Recorded as SYSTEM.
-// The customer email is not sent from here: CESANTONI's session queues it for approval.
+// The customer email of automatic changes (Shipped, Delivered) is sent automatically: by the next CESANTONI
+// session or by the Apps Script (rastreo, every 30 min), whichever comes first — same email id, never twice.
 const AUTO_SHIP_FROM = ['RECEIVED', 'PREPARING', 'PREPARED'];
 function autoShip(d, requestNo) {
   const req = d.requests[requestNo];
@@ -119,22 +120,22 @@ function autoShip(d, requestNo) {
   return entry;
 }
 
-// CESANTONI session: queue the customer email of each automatic change once (never sent by itself).
-const pendingAuto = (d) => d.statusHistory.filter((h) => h.auto && d.requests[h.requestNo]?.status === h.to && EMAIL_RE.test(String(d.requests[h.requestNo].customer?.email || ''))
+// CESANTONI session: create the customer email of each automatic change once; the caller sends it.
+const NOTIFY_AUTO = ['SHIPPED', 'DELIVERED'];
+const pendingAuto = (d) => d.statusHistory.filter((h) => h.auto && NOTIFY_AUTO.includes(h.to) && d.requests[h.requestNo]?.status === h.to && EMAIL_RE.test(String(d.requests[h.requestNo].customer?.email || ''))
   && !d.emails.some((e) => e.opKey === `auto:${h.id}`));
 function queueAutoEmails(ctx, d) {
-  let n = 0;
+  const ids = [];
   for (const h of pendingAuto(d)) {
     const key = `auto:${h.id}`;
     const req = d.requests[h.requestNo];
     try {
       const card = statusEmail({ req, status: h.to, shipment: d.shipments[h.requestNo], observations: '', timeZone: ctx.config.timeZone, logoSrc: 'cid:cesantoniLogo', carriers: ctx.settings().carriers });
       const e = queueEmail(d, { opKey: key, requestNos: [h.requestNo], type: 'STATUS_UPDATE', to: req.customer.email, ...card });
-      e.statusReason = 'Automatic status change — not sent until CESANTONI presses Retry';
-      n += 1;
+      ids.push(e.id);
     } catch { /* no valid customer email: CESANTONI sees the change in the history */ }
   }
-  return n;
+  return ids;
 }
 
 function setDeliveryMode(d, requestNo, mode, area) {

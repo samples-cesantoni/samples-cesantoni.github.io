@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { t } from '../i18n.js';
 import { html, raw, icon, esc, options, toast, busy } from '../ui.js';
 import { normalizeFile, ocrTracking } from '../media.js';
+import { carrierStatus } from './shipments.js';
 
 export function trackingForm(el, { det, ctx, onSaved }) {
   const s = det.shipment || {};
@@ -18,7 +19,7 @@ export function trackingForm(el, { det, ctx, onSaved }) {
     <div style="grid-column:1/-1"><label class="btn btn-ghost">${icon('scan')}${t('sh.ocr')}<input type="file" accept="image/*" capture="environment" hidden data-ocr></label><div data-ocrout class="small" style="margin-top:8px"></div></div>
     <label class="check" style="grid-column:1/-1" data-confirm hidden><input type="checkbox" name="trackingConfirmed"><span>${t('sh.confirm')}</span></label>
     <div style="grid-column:1/-1;display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap;align-items:center">
-      <span class="small">${s.trackingUrl ? html`<a href="${s.trackingUrl}" target="_blank" rel="noopener noreferrer">${icon('link')} ${t('sh.track')}</a>` : s.trackingNo ? t('sh.noUrl') : ''}</span>
+      <span class="small">${s.trackingUrl ? html`<a href="${s.trackingUrl}" target="_blank" rel="noopener noreferrer">${icon('link')} ${t('sh.track')}</a>` : s.trackingNo ? t('sh.noUrl') : ''}${s.carrierStatus ? html`<span style="margin-left:10px">${t('sh.carrierStatus')}: ${raw(carrierStatus(s))}</span>` : ''}</span>
       <button class="btn btn-primary" type="submit">${icon('check')}${t('sh.saveShip')}</button></div>
   </form>`.s;
   const f = el.querySelector('form');

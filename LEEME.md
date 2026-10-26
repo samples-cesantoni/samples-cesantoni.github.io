@@ -58,8 +58,18 @@ El registro técnico de quién hizo qué se guarda en `sc_seguridad`, que solo l
 
 Cuando un folio tiene **número de guía capturado y foto de la guía** (en cualquier orden, la capture Bodega o CESANTONI), pasa solo a **Shipped**
 si estaba en Received, Preparing o Prepared y su modo de entrega es paquetería o aún no está definido. Queda en el historial como cambio de *System*.
-El correo al cliente no sale solo: se genera en *Notificaciones* como «En cola» y CESANTONI lo envía con **Reintentar**.
 Las reglas de Firestore permiten a Bodega únicamente ese cambio, y solo si el folio ya tiene guía.
+
+## Rastreo UPS y correos automáticos
+
+- El Apps Script (`rastreo`, cada 30 min) consulta UPS por cada folio con guía UPS que no se ha entregado. En *Envíos y guías* aparece la fecha y el estatus de la paquetería
+  (etiqueta azul; verde cuando se entrega), y la fecha estimada que da UPS queda marcada como «carrier».
+- UPS en tránsito → el folio pasa solo a **In Transit** (sin correo). UPS entregado → pasa a **Delivered** con la fecha de entrega.
+- El correo al cliente de cada cambio automático **Shipped** y **Delivered** sale solo, con las mismas reglas de PRUEBA / PRODUCCIÓN que cualquier correo.
+  Lo envía la primera sesión de CESANTONI que esté abierta o, si no hay ninguna, el Apps Script. Nunca sale dos veces.
+- Credenciales de UPS (gratis): en https://developer.ups.com crea una app con el producto **Tracking**. En el proyecto de Apps Script:
+  *Configuración del proyecto › Propiedades del script* › agrega `UPS_CLIENT_ID` y `UPS_CLIENT_SECRET`. Después ejecuta `instalar` otra vez.
+  Sin credenciales, el rastreo no consulta UPS, pero los correos automáticos sí se envían.
 
 ## Capacidad (plan gratuito de Firebase, compartido con proveedores y movimientos)
 

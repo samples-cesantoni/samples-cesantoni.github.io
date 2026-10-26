@@ -4,6 +4,7 @@
  *  1. sincronizar()   cada 15 min: lee «Base Sample Request CESANTONI - English» (solo lectura) y crea en Firestore
  *                     las solicitudes nuevas (sc_solicitudes) con su folio original, el catálogo y el inventario físico.
  *  2. recordatorios() cada hora: envía los recordatorios programados de los avisos operativos (sc_avisos).
+ *  4. rastreo()       cada 30 min: estatus de UPS (Track API), cambios automáticos In Transit / Delivered y correo de cada cambio automático.
  *  3. volcarSalida()  cada 30 min: copia historial, evidencias, correos y operación a «Base Sample Evidence & Costs»
  *                     (agrega filas; antes verifica los encabezados). Apagado hasta que CONFIG.ESCRIBIR_EN_BASE sea true.
  *
@@ -26,6 +27,7 @@ function instalar() {
   ScriptApp.newTrigger('sincronizar').timeBased().everyMinutes(15).create();
   ScriptApp.newTrigger('recordatorios').timeBased().everyHours(1).create();
   ScriptApp.newTrigger('volcarSalida').timeBased().everyMinutes(30).create();
+  ScriptApp.newTrigger('rastreo').timeBased().everyMinutes(30).create();
   sincronizar();
 }
 
@@ -368,6 +370,138 @@ function recordatorios() {
     });
     return enviados;
   } finally { lock.releaseLock(); }
+}
+
+/* ------------------------------------------------------------------ 4. rastreo UPS y avisos automáticos de estatus */
+// rastreo() cada 30 min: consulta UPS (Track API) por cada folio con guía UPS que aún no se entrega. Guarda el estatus
+// de la paquetería y la fecha estimada, y mueve el folio solo: Shipped → In Transit → Delivered (queda como System).
+// Después envía el correo al cliente de cada cambio automático (Shipped y Delivered), respetando el modo PRUEBA/PRODUCCIÓN.
+// Credenciales de UPS (developer.ups.com): Configuración del proyecto › Propiedades del script › UPS_CLIENT_ID y UPS_CLIENT_SECRET.
+var ESTATUS_ETIQUETA = { RECEIVED: 'Received', PREPARING: 'Preparing', PREPARED: 'Prepared', READY_FOR_PICKUP: 'Ready for Pickup', SHIPPED: 'Shipped', IN_TRANSIT: 'In Transit', DELIVERED: 'Delivered', ON_HOLD: 'On Hold', CANCELLED: 'Cancelled' };
+var ESTATUS_MENSAJE = { SHIPPED: 'Your samples have been shipped.', IN_TRANSIT: 'Your samples are in transit with the carrier.', DELIVERED: 'Your samples have been delivered.' };
+var PAQ_NOMBRE = { FEDEX: 'FedEx', UPS: 'UPS', DHL: 'DHL Express', USPS: 'USPS', ESTAFETA: 'Estafeta', PAQUETEXPRESS: 'Paquetexpress' };
+var AVISAR_AUTO = ['SHIPPED', 'DELIVERED']; // In Transit cambia el estatus sin correo (llega el mismo día que Shipped)
+
+function tokenUps() {
+  var cache = CacheService.getScriptCache(), t = cache.get('ups_token'); if (t) return t;
+  var p = PropertiesService.getScriptProperties(), id = p.getProperty('UPS_CLIENT_ID'), secreto = p.getProperty('UPS_CLIENT_SECRET');
+  if (!id || !secreto) return null;
+  var r = UrlFetchApp.fetch('https://onlinetools.ups.com/security/v1/oauth/token', { method: 'post', muteHttpExceptions: true, contentType: 'application/x-www-form-urlencoded',
+    headers: { Authorization: 'Basic ' + Utilities.base64Encode(id + ':' + secreto) }, payload: 'grant_type=client_credentials' });
+  if (r.getResponseCode() >= 300) throw new Error('UPS token ' + r.getResponseCode() + ': ' + r.getContentText().slice(0, 200));
+  var j = JSON.parse(r.getContentText());
+  cache.put('ups_token', j.access_token, Math.max(60, Math.min(21000, Number(j.expires_in || 3600) - 120)));
+  return j.access_token;
+}
+function fechaUps(d, t) { // UPS: fecha YYYYMMDD y hora HHMMSS locales del lugar del evento
+  if (!/^\d{8}$/.test(d || '')) return '';
+  var h = /^\d{6}$/.test(t || '') ? t : '120000';
+  return d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8) + 'T' + h.slice(0, 2) + ':' + h.slice(2, 4) + ':' + h.slice(4, 6);
+}
+function consultarUps(token, guia) {
+  var r = UrlFetchApp.fetch('https://onlinetools.ups.com/api/track/v1/details/' + encodeURIComponent(guia) + '?locale=en_US&returnSignature=false', { method: 'get', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + token, transId: Utilities.getUuid().slice(0, 32), transactionSrc: 'cesantoni-samples' } });
+  if (r.getResponseCode() === 404) return null;
+  if (r.getResponseCode() >= 300) throw new Error('UPS ' + r.getResponseCode() + ': ' + r.getContentText().slice(0, 200));
+  var pk = (((JSON.parse(r.getContentText()).trackResponse || {}).shipment || [])[0] || {}).package; pk = pk && pk[0];
+  if (!pk) return null;
+  var act = (pk.activity || [])[0] || {}, st = act.status || {}, loc = ((act.location || {}).address) || {};
+  var entrega = (pk.deliveryDate || []).filter(function (x) { return x.type === 'DEL'; })[0], estimada = (pk.deliveryDate || []).filter(function (x) { return x.type !== 'DEL'; })[0];
+  return {
+    type: String(st.type || '').toUpperCase(), code: st.code || '', description: (pk.currentStatus && pk.currentStatus.description) || st.description || '',
+    at: fechaUps(act.date, act.time), location: [loc.city, loc.stateProvince, loc.countryCode].filter(Boolean).join(', '),
+    deliveredOn: entrega ? fechaUps(entrega.date, (pk.deliveryTime || {}).endTime) : '', estimated: estimada && /^\d{8}$/.test(estimada.date) ? estimada.date.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3') : ''
+  };
+}
+function cambioAutomatico(no, a, nota) { // estatus automático: historial (auto) + bitácora; el correo lo manda avisosAutomaticos()
+  var req = fsGet('sc_solicitudes', no); if (!req || req.status === a) return false;
+  var de = req.status, ahora = new Date().toISOString();
+  req.status = a; req.statusChangedAt = ahora; req.statusDates = req.statusDates || {}; if (!req.statusDates[a]) req.statusDates[a] = ahora;
+  fsReplace('sc_solicitudes', no, JSON.parse(JSON.stringify(req)), req);
+  var hid = rid('STH'); fsCreate('sc_historial', hid, { id: hid, requestNo: no, from: de, to: a, at: ahora, area: 'SYSTEM', auto: true, notes: nota, exception: null });
+  nuevoEvento(no, 'Status updated automatically: ' + ESTATUS_ETIQUETA[de] + ' → ' + ESTATUS_ETIQUETA[a] + ' (' + nota.replace(/^Automatic: /, '') + ')', ahora);
+  return true;
+}
+function rastreo() {
+  var lock = LockService.getScriptLock(); if (!lock.tryLock(30000)) return;
+  var res = { consultadas: 0, cambios: 0, errores: 0 };
+  try {
+    var token = tokenUps();
+    if (token) {
+      var solicitudes = {}; fsList('sc_solicitudes').forEach(function (r) { solicitudes[r.__id] = r; });
+      fsList('sc_envios').forEach(function (s) {
+        var no = s.__id, req = solicitudes[no];
+        if (!req || s.carrier !== 'UPS' || !s.trackingNo || ['DELIVERED', 'CANCELLED', 'ON_HOLD'].indexOf(req.status) >= 0) return;
+        var u;
+        try { u = consultarUps(token, s.trackingNo); res.consultadas++; } catch (e) { res.errores++; return; }
+        if (!u) return;
+        var nuevo = { type: u.type, code: u.code, description: u.description, at: u.at, location: u.location, checkedAt: new Date().toISOString() };
+        var prev = fsGet('sc_envios', no), env = JSON.parse(JSON.stringify(prev));
+        env.carrierStatus = nuevo;
+        if (u.estimated && u.type !== 'D') { env.estimatedDate = u.estimated; env.estimateConfirmed = true; }
+        if (u.type === 'D' && !env.deliveredAt) env.deliveredAt = u.deliveredOn || u.at;
+        fsReplace('sc_envios', no, env, prev);
+        if (u.type === 'D' && ['SHIPPED', 'IN_TRANSIT'].indexOf(req.status) >= 0) { if (cambioAutomatico(no, 'DELIVERED', 'Automatic: UPS reports delivered')) res.cambios++; }
+        else if (['I', 'P', 'O'].indexOf(u.type) >= 0 && req.status === 'SHIPPED') { if (cambioAutomatico(no, 'IN_TRANSIT', 'Automatic: UPS reports in transit')) res.cambios++; }
+      });
+    }
+    res.correos = avisosAutomaticos();
+    return res;
+  } finally { lock.releaseLock(); }
+}
+function tarjetaEstatus(req, estado, envio, nombre) {
+  var fecha = Utilities.formatDate(new Date(), CONFIG.ZONA, 'MMM dd, yyyy');
+  var fila = function (k, v, crudo) { return '<tr><td style="padding:10px 14px;border-bottom:1px solid #F0EEEA;font-size:12px;color:#6B7174;text-transform:uppercase;letter-spacing:1px;width:40%">' + esc(k) + '</td><td style="padding:10px 14px;border-bottom:1px solid #F0EEEA;font-size:14px;font-weight:600;color:#191D20">' + (crudo ? v : esc(v)) + '</td></tr>'; };
+  var filas = fila('Request number', req.requestNo) + fila('Current status', ESTATUS_ETIQUETA[estado]), e = envio || {};
+  if (e.trackingNo) {
+    filas += fila('Carrier', e.carrier === 'OTHER' ? (e.otherCarrierName || 'Carrier') : (PAQ_NOMBRE[e.carrier] || e.carrier || '—')) + fila('Tracking number', e.trackingNo);
+    if (e.trackingUrl) filas += fila('Tracking', '<a href="' + esc(e.trackingUrl) + '" style="color:#C5532E;font-weight:700">TRACK YOUR SHIPMENT</a>', true);
+    if (e.estimatedDate && e.estimateConfirmed && estado !== 'DELIVERED') filas += fila('Estimated delivery (carrier-confirmed)', e.estimatedDate);
+  }
+  var saludo = nombre ? 'Dear ' + esc(nombre) + ',' : 'Dear Customer,';
+  var html = '<!doctype html><html><body style="margin:0;padding:24px 0;background:#F7F7F5;font-family:Montserrat,Figtree,Arial,Helvetica,sans-serif;color:#202324"><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center"><table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#FFFFFF;border:1px solid #E4E2DD;border-radius:12px;overflow:hidden">' +
+    '<tr><td style="padding:28px 32px 18px;border-bottom:4px solid #C5532E"><img src="' + CONFIG.SITIO + 'assets/logo-cesantoni.png" alt="CESANTONI" width="180" style="display:block;width:180px;height:auto;border:0"></td></tr>' +
+    '<tr><td style="padding:26px 32px 4px"><div style="font-size:12px;letter-spacing:2px;color:#C5532E;font-weight:700;text-transform:uppercase">Sample Request Update</div><h1 style="margin:8px 0 0;font-size:22px;line-height:1.3;color:#191D20">Request ' + esc(req.requestNo) + ': ' + esc(ESTATUS_ETIQUETA[estado]) + '</h1></td></tr>' +
+    '<tr><td style="padding:16px 32px 4px;font-size:15px;line-height:1.6"><p style="margin:0 0 10px">' + saludo + '</p><p style="margin:0 0 10px">' + esc(ESTATUS_MENSAJE[estado]) + '</p></td></tr>' +
+    '<tr><td style="padding:12px 32px 8px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #ECEAE5;border-radius:8px">' + filas + '</table></td></tr>' +
+    '<tr><td style="padding:22px 32px 28px;font-size:14px;line-height:1.6;color:#4A4F52">Kind regards,<br><strong style="color:#191D20">CESANTONI Logistics</strong><br>Sample Requests Team</td></tr>' +
+    '<tr><td style="padding:14px 32px;background:#191D20;color:#B9BDBF;font-size:11px;line-height:1.5">CESANTONI · Porcelanato Premium<br>Notice date: ' + esc(fecha) + ' · This is an automated message regarding your sample request.</td></tr></table></td></tr></table></body></html>';
+  var texto = [saludo, ESTATUS_MENSAJE[estado], 'Request number: ' + req.requestNo, 'Current status: ' + ESTATUS_ETIQUETA[estado],
+    e.trackingNo ? 'Carrier: ' + (PAQ_NOMBRE[e.carrier] || e.carrier) + '\nTracking number: ' + e.trackingNo + (e.trackingUrl ? '\nTrack: ' + e.trackingUrl : '') : '',
+    'Kind regards,\nCESANTONI Logistics — Sample Requests Team', 'Notice date: ' + fecha].filter(Boolean).join('\n\n');
+  return { subject: 'CESANTONI sample request ' + req.requestNo + ' — ' + ESTATUS_ETIQUETA[estado], html: html, text: texto };
+}
+// Correo de cada cambio automático (Shipped por guía + foto, Delivered por UPS). Mismo id que usa la plataforma: nunca se duplica.
+// Si una sesión de CESANTONI ya lo creó, se deja 5 minutos para que la propia plataforma lo envíe.
+function avisosAutomaticos() {
+  var ajustes = fsGet('sc_config', 'ajustes') || {}, prueba = ajustes.emailMode !== 'PRODUCTION', enviados = 0, ahora = Date.now();
+  var correos = {}; fsList('sc_correos').forEach(function (c) { if (c.opKey && c.opKey.indexOf('auto:') === 0) correos[c.opKey] = c; });
+  fsList('sc_historial').filter(function (h) { return h.auto && AVISAR_AUTO.indexOf(h.to) >= 0; }).forEach(function (h) {
+    var opKey = 'auto:' + h.id, id = 'EML-' + sha1(opKey).slice(0, 24), reg = correos[opKey];
+    if (reg && reg.status !== 'QUEUED') return; // enviado, enviándose o fallido (se reintenta desde Notificaciones)
+    if (reg && reg.origin !== 'APPS_SCRIPT' && ahora - Date.parse(reg.createdAt) < 5 * 60e3) return;
+    var req = fsGet('sc_solicitudes', h.requestNo); if (!req || req.status !== h.to) return;
+    var contacto = fsGet('sc_contactos', h.requestNo), correo = String(contacto && contacto.email || '').trim().toLowerCase();
+    if (!CORREO_OK.test(correo)) return;
+    if (!reg) {
+      var tarjeta = tarjetaEstatus(req, h.to, fsGet('sc_envios', h.requestNo), req.customer && req.customer.fullName);
+      reg = { origin: 'APPS_SCRIPT', id: id, opKey: opKey, requestNos: [h.requestNo], type: 'STATUS_UPDATE', to: correo, subject: tarjeta.subject, html: tarjeta.html, text: tarjeta.text, noticeId: null, status: 'QUEUED', statusReason: '', attempts: 0, providerId: null, error: '', createdAt: new Date().toISOString(), sentAt: null, deliveredTo: null };
+      if (!fsCreate('sc_correos', id, reg)) return;
+    }
+    var destino = prueba ? ajustes.testRecipient : reg.to, prev = fsGet('sc_correos', id);
+    if (!CORREO_OK.test(destino || '')) {
+      if (reg.statusReason !== 'TEST mode: no test recipient configured — not sent') { reg.statusReason = 'TEST mode: no test recipient configured — not sent'; fsReplace('sc_correos', id, reg, prev); }
+      return;
+    }
+    try {
+      MailApp.sendEmail({ to: destino, subject: (prueba ? '[TEST] ' : '') + reg.subject, htmlBody: reg.html, body: reg.text, name: 'CESANTONI Samples' });
+      reg.status = 'SENT'; reg.sentAt = new Date().toISOString(); reg.providerId = 'apps-script'; reg.deliveredTo = prueba ? 'TEST_RECIPIENT' : 'CUSTOMER'; reg.statusReason = ''; enviados++;
+      nuevoEvento(h.requestNo, 'Customer notification sent (automatic status)' + (prueba ? ' (test recipient)' : ''), reg.sentAt);
+    } catch (err) { reg.status = 'FAILED'; reg.error = String(err.message || err).slice(0, 300); }
+    reg.attempts = (reg.attempts || 0) + 1;
+    fsReplace('sc_correos', id, reg, prev);
+  });
+  return enviados;
 }
 
 /* ------------------------------------------------------------------ 3. copia a «Base Sample Evidence & Costs» */

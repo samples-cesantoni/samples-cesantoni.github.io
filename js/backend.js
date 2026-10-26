@@ -440,8 +440,11 @@ export async function handle(method, path, { body, form } = {}) {
   if (r.ces && store.area !== 'CESANTONI') throw new AppError(403, 'FORBIDDEN', 'Your profile does not have access to this function');
   try {
     await store.refresh(method !== 'GET');
-    // Automatic status changes made by the Warehouse: CESANTONI's session queues the customer email (not sent by itself).
-    if (store.area === 'CESANTONI' && status.pendingAuto(store.d).length) await store.mutate((d) => status.queueAutoEmails(ctx, d), 'AUTO_EMAIL').catch(() => null);
+    // Automatic status changes (Warehouse tracking + label, UPS): the customer email goes out automatically.
+    if (store.area === 'CESANTONI' && status.pendingAuto(store.d).length) {
+      const ids = await store.mutate((d) => status.queueAutoEmails(ctx, d), 'AUTO_EMAIL').catch(() => []);
+      for (const id of ids || []) await dispatch(id).catch(() => null); // same TEST / PRODUCTION rules as any other email
+    }
     return await r.fn(q, body || {}, p.match(r.re).slice(1).map(decodeURIComponent), form);
   } catch (e) { throw translate(e); }
 }
