@@ -50,9 +50,16 @@ El registro técnico de quién hizo qué se guarda en `sc_seguridad`, que solo l
 ## Carga masiva de evidencias
 
 *Operación › Carga masiva de evidencias* recibe un ZIP con una carpeta por folio (`SMCES-005` o `SMCES-0005`) o varias fotos sueltas.
-- El folio sale del nombre de la carpeta o del archivo; el tipo, de palabras en el nombre (guía/etiqueta, caja, embalaje, material, preparación…). Donde falte, se elige en la tabla.
-- Las etiquetas de paquetería se leen en el mismo equipo (OCR): se reconocen como foto de guía, se muestra la guía y la referencia impresa. Si la referencia es de otro folio, la foto no se sube hasta confirmar el folio.
+- El folio sale del nombre de la carpeta o del archivo; el tipo, de palabras en el nombre (guía/etiqueta, caja, embalaje, material, preparación…).
+- Para las fotos cuyo nombre no dice qué son, se elige un tipo para todas («Tipo para las fotos sin tipo») o foto por foto.
 - Una foto que ya se subió al mismo folio y tipo se salta sola, aunque se vuelva a cargar el mismo ZIP.
+
+## Estatus automático «Shipped»
+
+Cuando un folio tiene **número de guía capturado y foto de la guía** (en cualquier orden, la capture Bodega o CESANTONI), pasa solo a **Shipped**
+si estaba en Received, Preparing o Prepared y su modo de entrega es paquetería o aún no está definido. Queda en el historial como cambio de *System*.
+El correo al cliente no sale solo: se genera en *Notificaciones* como «En cola» y CESANTONI lo envía con **Reintentar**.
+Las reglas de Firestore permiten a Bodega únicamente ese cambio, y solo si el folio ya tiene guía.
 
 ## Capacidad (plan gratuito de Firebase, compartido con proveedores y movimientos)
 

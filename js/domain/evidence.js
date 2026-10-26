@@ -1,6 +1,7 @@
 import { rid } from './common.js';
 import { AppError, logEvent, getRequest, once } from './common.js';
 import { EVIDENCE_STAGE, EVIDENCE_LABEL, CARRIERS } from './catalog.js';
+import { autoShip } from './status.js';
 
 function addEvidence(d, { requestNo, type, fileId, notes, data, replacesId, eventAt, opKey }, area) {
   return once(d, opKey, () => {
@@ -26,7 +27,8 @@ function addEvidence(d, { requestNo, type, fileId, notes, data, replacesId, even
     if (replaced) replaced.supersededBy = e.id;
     logEvent(d, { requestNo, event: `${EVIDENCE_LABEL[type]} uploaded${replaced ? ' (correction)' : ''}`, area });
     d.sheetOutbox.push({ kind: 'EVIDENCE_LOG', evidenceId: e.id, at: e.uploadedAt });
-    return { evidence: e };
+    const auto = type === 'SHIPPING_LABEL_PHOTO' ? autoShip(d, requestNo) : null;
+    return { evidence: e, autoStatus: auto ? auto.to : null };
   });
 }
 
@@ -84,7 +86,8 @@ function setShipment(d, settings, requestNo, input, area) {
     logEvent(d, { requestNo, event: input.deliveredAt ? 'Delivery details recorded' : 'Carrier / tracking details updated', area });
     d.sheetOutbox.push({ kind: 'OPERATION', requestNo, at: s.updatedAt });
   }
-  return { shipment: s };
+  const auto = s.trackingNo ? autoShip(d, requestNo) : null;
+  return { shipment: s, autoStatus: auto ? auto.to : null };
 }
 
 export { addEvidence, reviewEvidence, setShipment, trackingUrl, TRACKING_RE };

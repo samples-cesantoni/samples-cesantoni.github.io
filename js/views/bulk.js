@@ -1,10 +1,10 @@
 // Bulk evidence upload: a ZIP (one folder per request) or several photos at once.
-// Each photo is matched to its request and evidence type from the folder / file name,
-// and shipping labels are read on the device (OCR) to confirm the request and tracking.
+// Each photo is matched to its request and evidence type from the folder / file name;
+// a default type covers the photos whose name does not say what they are.
 import { api } from '../api.js';
 import { t } from '../i18n.js';
 import { html, raw, icon, esc, toast, errToast } from '../ui.js';
-import { normalizeFile, uploadFile, ocrTracking } from '../media.js';
+import { normalizeFile, uploadFile } from '../media.js';
 import { readZip } from '../zip.js';
 
 const plain = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[_\-.]+/g, ' ');
@@ -31,14 +31,6 @@ const folioKey = (s) => { const m = String(s || '').toUpperCase().match(/SMCES[\
 const isImage = (name) => /\.(jpe?g|png|webp|heic|heif)$/i.test(name);
 const isPdf = (name) => /\.pdf$/i.test(name);
 const mimeOf = (name) => (isPdf(name) ? 'application/pdf' : /\.png$/i.test(name) ? 'image/png' : /\.webp$/i.test(name) ? 'image/webp' : 'image/jpeg');
-// Phone photos of labels read better in grayscale, enlarged and with more contrast.
-async function forOcr(blob) {
-  const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' });
-  const s = Math.min(2.2, 2400 / Math.max(bmp.width, bmp.height));
-  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
-  const g = c.getContext('2d'); g.filter = 'grayscale(1) contrast(1.6)'; g.drawImage(bmp, 0, 0, c.width, c.height);
-  return c;
-}
 async function sha(blob) { return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), (x) => x.toString(16).padStart(2, '0')).join(''); }
 
 export async function render(el, ctx) {
@@ -51,6 +43,7 @@ export async function render(el, ctx) {
   }).join('');
   let rows = [];
   let busy = false;
+  let fallback = ''; // type for photos whose name does not say what they are
 
   el.innerHTML = html`<div class="page-head"><div><h1>${t('bk.title')}</h1><p>${t('bk.sub')}</p></div></div>
     <div class="card"><div class="pick">
@@ -60,7 +53,8 @@ export async function render(el, ctx) {
     <div data-list></div>`.s;
   const list = el.querySelector('[data-list]');
 
-  const ready = (r) => r.state === 'PENDING' && r.folio && r.type && !(r.conflict && !r.folioConfirmed);
+  const typeOf = (r) => r.type || fallback;
+  const ready = (r) => r.state === 'PENDING' && r.folio && typeOf(r);
   function draw() {
     if (!rows.length) { list.innerHTML = ''; return; }
     const n = rows.filter(ready).length;
@@ -69,19 +63,18 @@ export async function render(el, ctx) {
       <div class="card-head"><h2>${t('bk.review')} (${rows.length})</h2>
         <button class="btn btn-primary" data-go ${n && !busy ? '' : 'disabled'}>${icon('check')}${t('bk.upload')} (${n})</button></div>
       <p class="hint" style="margin:0 0 12px">${t('bk.reviewHint')}</p>
-      <div class="table-wrap"><table class="t cards"><thead><tr><th></th><th>${t('bk.file')}</th><th>${t('req.title')}</th><th>${t('up.type')}</th><th>${t('bk.detected')}</th><th>${t('common.status')}</th></tr></thead><tbody>
+      ${rows.some((r) => !r.type) ? html`<label class="field" style="max-width:420px;margin-bottom:14px"><span>${t('bk.fallback')} (${rows.filter((r) => !r.type).length})</span><select class="input" data-fallback ${busy ? 'disabled' : ''}><option value="">—</option>${raw(typeOptions.replace(`value="${fallback}"`, `value="${fallback}" selected`))}</select></label>` : ''}
+      <div class="table-wrap"><table class="t cards"><thead><tr><th></th><th>${t('bk.file')}</th><th>${t('req.title')}</th><th>${t('up.type')}</th><th>${t('common.status')}</th></tr></thead><tbody>
       ${raw(rows.map((r, i) => html`<tr>
         <td>${r.preview ? raw(`<img src="${r.preview}" alt="" style="width:72px;height:72px;object-fit:cover;border-radius:6px;display:block">`) : icon('file')}</td>
         <td data-l="${t('bk.file')}" class="small" style="max-width:220px;word-break:break-word">${r.path}</td>
         <td data-l="${t('req.title')}"><select class="input" data-folio="${i}" ${r.state !== 'PENDING' || busy ? 'disabled' : ''}>${raw(reqOpts(r.folio))}</select></td>
-        <td data-l="${t('up.type')}"><select class="input" data-type="${i}" ${r.state !== 'PENDING' || busy ? 'disabled' : ''}><option value="">—</option>${raw(typeOptions.replace(`value="${r.type}"`, `value="${r.type}" selected`))}</select></td>
-        <td data-l="${t('bk.detected')}" class="small">${r.ocrBusy ? t('bk.reading') : ''}${r.tracking ? raw(`<span class="mono">${esc(r.tracking)}</span><br>`) : ''}${r.labelFolio ? `${t('bk.labelSays')} ${r.labelFolio}` : ''}
-          ${r.conflict && !r.folioConfirmed ? raw(`<div class="badge red" style="margin-top:4px;white-space:normal">${esc(t('bk.conflict'))}</div><div style="margin-top:6px"><button class="btn btn-ghost btn-sm" data-use="${i}">${esc(t('bk.use'))} ${esc(r.labelFolio)}</button></div>`) : ''}</td>
+        <td data-l="${t('up.type')}"><select class="input" data-type="${i}" ${r.state !== 'PENDING' || busy ? 'disabled' : ''}><option value="">${r.type || !fallback ? '—' : evidenceLabel[fallback]}</option>${raw(r.type ? typeOptions.replace(`value="${r.type}"`, `value="${r.type}" selected`) : typeOptions)}</select></td>
         <td data-l="${t('common.status')}">${raw(stateBadge(r))}</td></tr>`.s).join(''))}
       </tbody></table></div></div>`.s;
     list.querySelector('[data-go]')?.addEventListener('click', go);
-    list.querySelectorAll('[data-folio]').forEach((s) => s.addEventListener('change', () => { const r = rows[s.dataset.folio]; r.folio = s.value; r.folioConfirmed = true; draw(); }));
-    list.querySelectorAll('[data-use]').forEach((x) => x.addEventListener('click', () => { const r = rows[x.dataset.use]; r.folio = r.labelFolio; r.folioConfirmed = true; draw(); }));
+    list.querySelectorAll('[data-folio]').forEach((s) => s.addEventListener('change', () => { rows[s.dataset.folio].folio = s.value; draw(); }));
+    list.querySelector('[data-fallback]')?.addEventListener('change', (e) => { fallback = e.target.value; draw(); });
     list.querySelectorAll('[data-type]').forEach((s) => s.addEventListener('change', () => { rows[s.dataset.type].type = s.value; draw(); }));
   }
   function stateBadge(r) {
@@ -89,13 +82,12 @@ export async function render(el, ctx) {
     if (r.state === 'DUP') return `<span class="badge">${esc(t('bk.dup'))}</span>`;
     if (r.state === 'ERROR') return `<span class="badge red" title="${esc(r.msg || '')}">${esc(t('common.error'))}</span><div class="small">${esc(r.msg || '')}</div>`;
     if (r.state === 'UPLOADING') return `<span class="badge blue">${esc(t('bk.uploading'))}</span>`;
-    if (r.conflict && !r.folioConfirmed) return `<span class="badge red">${esc(t('bk.check'))}</span>`;
     return ready(r) ? `<span class="badge amber">${esc(t('bk.ready'))}</span>` : `<span class="badge">${esc(t('bk.missing'))}</span>`;
   }
 
   async function load(entries) {
     rows.forEach((r) => r.preview && URL.revokeObjectURL(r.preview));
-    rows = [];
+    rows = []; fallback = '';
     const seen = new Set();
     for (const e of entries) {
       if (!isImage(e.name) && !isPdf(e.name)) continue;
@@ -108,23 +100,6 @@ export async function render(el, ctx) {
     }
     if (!rows.length) { toast(t('bk.none'), 'err'); draw(); return; }
     draw();
-    // Shipping labels: read the request reference and tracking number printed on the label.
-    for (const r of rows.filter((x) => x.preview && (!x.type || x.type === 'SHIPPING_LABEL_PHOTO'))) {
-      r.ocrBusy = true; draw();
-      try {
-        const { candidates, text } = await ocrTracking(await forOcr(r.blob));
-        const spaced = (text.toUpperCase().match(/1Z(?:\s*[0-9A-Z]){16}/) || [''])[0].replace(/\s+/g, ''); // labels print "1Z 5Y7 TE9 03 ..."
-        const ups = candidates.find((c) => /^1Z/.test(c)) || spaced;
-        const k = folioKey(text);
-        if (ups || /TRACKING|UPS|FEDEX|DHL/i.test(text)) { r.type = r.type || 'SHIPPING_LABEL_PHOTO'; r.tracking = r.tracking || ups || (/UPS/i.test(text) ? '' : candidates[0] || ''); } // never a phone number as a UPS tracking
-        if (k !== null && byKey.has(k)) {
-          r.labelFolio = byKey.get(k);
-          if (!r.folio) r.folio = r.labelFolio;
-          else if (r.folio !== r.labelFolio) r.conflict = true;
-        }
-      } catch { /* OCR is only a help; the user still chooses */ }
-      r.ocrBusy = false; draw();
-    }
   }
 
   async function go() {
@@ -133,7 +108,7 @@ export async function render(el, ctx) {
     busy = true; draw();
     let ok = 0, dup = 0, bad = 0;
     try {
-      todo.forEach((r) => { r.opKey = `BULK-${r.hash.slice(0, 32)}-${r.folio}-${r.type}`; });
+      todo.forEach((r) => { r.finalType = typeOf(r); r.opKey = `BULK-${r.hash.slice(0, 32)}-${r.folio}-${r.finalType}`; });
       const { known } = await api('/evidence/known', { method: 'POST', body: { keys: todo.map((r) => r.opKey) } });
       for (const r of todo) {
         if (known.includes(r.opKey)) { r.state = 'DUP'; dup++; draw(); continue; }
@@ -141,7 +116,7 @@ export async function render(el, ctx) {
         try {
           const item = await normalizeFile(new File([r.blob], r.name, { type: mimeOf(r.name) }));
           const file = await uploadFile(r.folio, item);
-          await api('/evidence', { method: 'POST', body: { requestNo: r.folio, type: r.type, fileId: file.id, notes: r.tracking ? `Tracking on label: ${r.tracking}` : '', opKey: r.opKey } });
+          await api('/evidence', { method: 'POST', body: { requestNo: r.folio, type: r.finalType, fileId: file.id, notes: r.tracking ? `Tracking on label: ${r.tracking}` : '', opKey: r.opKey } });
           r.state = 'DONE'; ok++;
         } catch (e) { r.state = 'ERROR'; r.msg = e.message; bad++; }
         draw();

@@ -2,7 +2,7 @@ import { rid } from './common.js';
 import { AppError, logEvent, getRequest } from './common.js';
 import { STATUSES, STATUS_LABEL, FLOW, FINAL_STATUSES } from './catalog.js';
 import { checklist } from './checklist.js';
-import { statusEmail, queueEmail } from './email.js';
+import { statusEmail, queueEmail, EMAIL_RE } from './email.js';
 
 // Requirements that must be met (or explicitly excepted) before entering a status.
 function requirements(d, req, to) {
@@ -97,6 +97,46 @@ function changeStatus(ctx, { requestNo, to, notes, notify, opKey, exceptionReaso
   });
 }
 
+// Automatic status: once a request has its tracking number AND a shipping label photo,
+// it moves to Shipped by itself (whoever captured the last of the two). Recorded as SYSTEM.
+// The customer email is not sent from here: CESANTONI's session queues it for approval.
+const AUTO_SHIP_FROM = ['RECEIVED', 'PREPARING', 'PREPARED'];
+function autoShip(d, requestNo) {
+  const req = d.requests[requestNo];
+  if (!req || !AUTO_SHIP_FROM.includes(req.status) || ![null, undefined, '', 'COURIER'].includes(req.deliveryMode)) return null;
+  if (!d.shipments[requestNo]?.trackingNo) return null;
+  if (!d.evidence.some((e) => e.requestNo === requestNo && e.type === 'SHIPPING_LABEL_PHOTO' && !e.supersededBy && e.state !== 'RETURNED')) return null;
+  const at = new Date().toISOString();
+  const from = req.status;
+  req.status = 'SHIPPED';
+  req.statusChangedAt = at;
+  req.statusDates = { ...(req.statusDates || {}) };
+  if (!req.statusDates.SHIPPED) req.statusDates.SHIPPED = at;
+  const entry = { id: rid('STH'), requestNo, from, to: 'SHIPPED', at, area: 'SYSTEM', auto: true, notes: 'Automatic: tracking number and shipping label photo registered', exception: null };
+  d.statusHistory.push(entry);
+  logEvent(d, { requestNo, event: `Status updated automatically: ${STATUS_LABEL[from]} → ${STATUS_LABEL.SHIPPED} (tracking and label registered)`, area: 'SYSTEM', at });
+  d.sheetOutbox.push({ kind: 'STATUS_HISTORY', historyId: entry.id, at });
+  return entry;
+}
+
+// CESANTONI session: queue the customer email of each automatic change once (never sent by itself).
+const pendingAuto = (d) => d.statusHistory.filter((h) => h.auto && d.requests[h.requestNo]?.status === h.to && EMAIL_RE.test(String(d.requests[h.requestNo].customer?.email || ''))
+  && !d.emails.some((e) => e.opKey === `auto:${h.id}`));
+function queueAutoEmails(ctx, d) {
+  let n = 0;
+  for (const h of pendingAuto(d)) {
+    const key = `auto:${h.id}`;
+    const req = d.requests[h.requestNo];
+    try {
+      const card = statusEmail({ req, status: h.to, shipment: d.shipments[h.requestNo], observations: '', timeZone: ctx.config.timeZone, logoSrc: 'cid:cesantoniLogo', carriers: ctx.settings().carriers });
+      const e = queueEmail(d, { opKey: key, requestNos: [h.requestNo], type: 'STATUS_UPDATE', to: req.customer.email, ...card });
+      e.statusReason = 'Automatic status change — not sent until CESANTONI presses Retry';
+      n += 1;
+    } catch { /* no valid customer email: CESANTONI sees the change in the history */ }
+  }
+  return n;
+}
+
 function setDeliveryMode(d, requestNo, mode, area) {
   const req = getRequest(d, requestNo);
   if (!['COURIER', 'PICKUP', 'WAREHOUSE'].includes(mode)) throw new AppError(400, 'INVALID_MODE', 'Invalid delivery mode');
@@ -106,4 +146,4 @@ function setDeliveryMode(d, requestNo, mode, area) {
   return { request: req };
 }
 
-export { requirements, consistency, previewChange, changeStatus, setDeliveryMode };
+export { requirements, consistency, previewChange, changeStatus, setDeliveryMode, autoShip, queueAutoEmails, pendingAuto };

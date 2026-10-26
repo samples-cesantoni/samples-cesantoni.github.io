@@ -344,11 +344,18 @@ service cloud.firestore {
       allow delete: if scAdmin() || (signedIn() && request.auth.token.email == correo);
     }
 
-    // Solicitudes (sincronizadas del formulario original). Bodega solo agrega observaciones; el estatus oficial es de CESANTONI.
+    // Solicitudes (sincronizadas del formulario original). Bodega agrega observaciones; el estatus oficial es de CESANTONI,
+    // salvo el cambio automático a «Shipped» cuando el folio ya tiene guía capturada (y foto de la guía).
+    function scAutoEnvio(no) {
+      return resource.data.status in ['RECEIVED', 'PREPARING', 'PREPARED'] && request.resource.data.status == 'SHIPPED' &&
+        resource.data.get('deliveryMode', null) in [null, '', 'COURIER'] &&
+        scSolo(['status', 'statusChangedAt', 'statusDates', '_v', '_u']) &&
+        getAfter(/databases/$(database)/documents/sc_envios/$(no)).data.get('trackingNo', '') != '';
+    }
     match /sc_solicitudes/{no} {
       allow read: if scStaff();
       allow create: if scCes();
-      allow update: if scCes() || (scBod() && scSolo(['observations', '_v', '_u']));
+      allow update: if scCes() || (scBod() && (scSolo(['observations', '_v', '_u']) || scAutoEnvio(no)));
     }
     // Correo del cliente: solo CESANTONI (es quien autoriza y envía las notificaciones).
     match /sc_contactos/{no} {
@@ -399,7 +406,10 @@ service cloud.firestore {
     }
     match /sc_historial/{id} {
       allow read: if scStaff();
-      allow create: if scCes() && request.resource.data.area in ['CESANTONI', 'SYSTEM'];
+      allow create: if (scCes() && request.resource.data.area in ['CESANTONI', 'SYSTEM']) ||
+        (scBod() && request.resource.data.area == 'SYSTEM' && request.resource.data.auto == true && request.resource.data.to == 'SHIPPED' &&
+         get(/databases/$(database)/documents/sc_solicitudes/$(request.resource.data.requestNo)).data.status != 'SHIPPED' &&
+         getAfter(/databases/$(database)/documents/sc_solicitudes/$(request.resource.data.requestNo)).data.status == 'SHIPPED');
     }
     // Bitácora visible: solo áreas, nunca personas. No se modifica ni se borra.
     match /sc_eventos/{id} {
