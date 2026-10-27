@@ -40,12 +40,22 @@ Igual que proveedores y movimientos:
 
 | Perfil | Qué hace | Qué no puede (bloqueado por las reglas, no solo oculto) |
 |---|---|---|
-| Bodega (ARMEX) | Captura rápida, evidencias con cámara, carga masiva de evidencias (ZIP con una carpeta por folio), inventario (reservar y dar salida), guías con OCR, entregas, QR y etiquetas | Cambiar estatus, aprobar evidencias, leer costos, facturas, correos del cliente o avisos, subir existencias, borrar bitácora |
+| Bodega (ARMEX) | Captura rápida, evidencias con cámara, carga masiva de evidencias (ZIP con una carpeta por folio), inventario (consulta), guías con OCR, entregas, QR y etiquetas | Cambiar estatus, aprobar evidencias, leer costos, facturas, correos del cliente o avisos, subir existencias, borrar bitácora |
 | CESANTONI | Todo lo anterior, más dashboard, validación, estatus oficial, correos, avisos, facturación USD, reportes y expedientes con finanzas | Dar de alta usuarios ni activar correos en producción |
 | CESANTONI · administrador | Todo, más usuarios por área y activar el envío real a clientes | — |
 
 En pantallas, PDF, Excel, etiquetas y correos solo aparece el área (CESANTONI / Warehouse / System), nunca el nombre de una persona.
 El registro técnico de quién hizo qué se guarda en `sc_seguridad`, que solo leen los administradores desde la consola.
+
+## Inventario (lo lleva la plataforma)
+
+- Desde el primer uso de esta versión (`inventoryFrom` en *sc_config/ajustes*) la plataforma lleva las existencias; la base de Sheets ya no las sobrescribe.
+- Cada folio que llega después se **descuenta al llegar**, línea por línea, del artículo del mismo modelo y color (prefiere corte o pieza completa
+  según lo pedido) y de su mueble/posición en el inventario físico. Queda como movimiento «Descuento al llegar» en el folio y en *Inventario*.
+- Si el folio se **cancela** o CESANTONI marca «No descontar inventario de este folio», las piezas **regresan** solas.
+- Los folios anteriores ya los había descontado la base y no se descuentan otra vez.
+- **Entradas y conteos:** en *Inventario*, CESANTONI usa **Ajustar** en el artículo, escribe la nueva existencia y el motivo; queda registrado.
+- Lo hace la sesión de CESANTONI al abrir la plataforma o el Apps Script (`sincronizar`, cada 15 min), lo que ocurra primero; mismos ids, nunca dos veces.
 
 ## Carga masiva de evidencias
 

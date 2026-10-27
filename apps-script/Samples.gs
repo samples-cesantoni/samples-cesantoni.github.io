@@ -281,33 +281,95 @@ function sincronizar() {
     });
     // Inventario: la base manda (descuenta por folio). Nunca se borra un artículo.
     var hc = sha1(JSON.stringify(cat));
+    // Desde ajustes.inventoryFrom la plataforma lleva las existencias: de la base solo se toman artículos nuevos.
+    var aj0 = fsGet('sc_config', 'ajustes'), desde = aj0 && aj0.inventoryFrom, nuevos = {};
     if (meta.catalogo !== hc) {
       var actuales = {}; fsList('sc_inventario').forEach(function (x) { actuales[x.__id] = x; });
       cat.items.forEach(function (it) {
         var ex = actuales[it.itemId];
-        if (!ex) { it.sourceOnHand = it.onHand; it.reserved = 0; it.inSource = true; it.importedAt = ahora; if (fsCreate('sc_inventario', it.itemId, it)) res.articulos++; return; }
-        var cambio = ['sku', 'model', 'color', 'format', 'sampleType', 'formLabel', 'onHand', 'location', 'backupLocation', 'display'].some(function (k) { return JSON.stringify(ex[k]) !== JSON.stringify(it[k]); }) || ex.inSource !== true;
-        if (cambio) { var nx = JSON.parse(JSON.stringify(ex)); Object.keys(it).forEach(function (k) { nx[k] = it[k]; }); nx.sourceOnHand = it.onHand; nx.inSource = true; fsReplace('sc_inventario', it.itemId, nx, ex); res.existencias++; }
+        if (!ex) { it.sourceOnHand = it.onHand; it.reserved = 0; it.inSource = true; it.importedAt = ahora; if (fsCreate('sc_inventario', it.itemId, it)) { res.articulos++; nuevos[it.itemId] = true; } return; }
+        var cambio = ['sku', 'model', 'color', 'format', 'sampleType', 'formLabel', desde ? null : 'onHand', 'location', 'backupLocation', 'display'].filter(Boolean).some(function (k) { return JSON.stringify(ex[k]) !== JSON.stringify(it[k]); }) || ex.inSource !== true;
+        if (cambio) { var nx = JSON.parse(JSON.stringify(ex)); Object.keys(it).forEach(function (k) { nx[k] = it[k]; }); if (desde) nx.onHand = ex.onHand; nx.sourceOnHand = it.onHand; nx.inSource = true; fsReplace('sc_inventario', it.itemId, nx, ex); res.existencias++; }
       });
-      if (cat.fisico.length) fsReplace('sc_config', 'fisico', { rows: cat.fisico }, fsGet('sc_config', 'fisico'));
+      var fis = fsGet('sc_config', 'fisico');
+      if (cat.fisico.length && (!desde || !fis || !(fis.rows || []).length)) fsReplace('sc_config', 'fisico', { rows: cat.fisico }, fis);
       meta.catalogo = hc;
     }
     // Descuentos de la base como movimientos del folio (id determinista: no se duplican).
     var hm = sha1(JSON.stringify(movimientos));
     if (meta.movimientos !== hm) {
-      var inv = fsList('sc_inventario');
+      var inv = fsList('sc_inventario'), creadas = {};
+      fsList('sc_solicitudes').forEach(function (q) { creadas[q.__id] = q.createdAt || ''; });
       movimientos.forEach(function (m) {
+        if (desde && creadas[m.requestNo] !== undefined && String(creadas[m.requestNo]) >= desde) return; // lo descuenta la plataforma
         var c = inv.filter(function (i) { return norm(i.model) === norm(m.model) && norm(i.color) === norm(m.color); });
         var it = c.filter(function (i) { return norm(i.location) === norm(m.location) && norm(i.sampleType) === norm(m.sampleType); })[0] || c.filter(function (i) { return norm(i.location) === norm(m.location); })[0] || c[0];
-        if (fsCreate('sc_movimientos', m.id, { id: m.id, at: m.at || ahora, type: 'ISSUE', itemId: it ? it.__id : null, qty: m.qty, requestNo: m.requestNo, area: 'SYSTEM', source: 'BASE', model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, before: m.before, after: m.after, note: m.note || 'Deducted by the Sample Request base' })) res.descuentos++;
+        var antes = m.before, despues = m.after, fresco = desde && it && !nuevos[it.__id] ? fsGet('sc_inventario', it.__id) : null;
+        if (fresco) { antes = fresco.onHand; despues = Math.max(0, fresco.onHand - (m.qty || 0)); }
+        if (fsCreate('sc_movimientos', m.id, { id: m.id, at: m.at || ahora, type: 'ISSUE', itemId: it ? it.__id : null, qty: m.qty, requestNo: m.requestNo, area: 'SYSTEM', source: 'BASE', model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, before: antes, after: despues, note: m.note || 'Deducted by the Sample Request base' })) {
+          res.descuentos++;
+          if (fresco) { var nf = JSON.parse(JSON.stringify(fresco)); nf.onHand = despues; fsReplace('sc_inventario', it.__id, nf, fresco); } // ya no se copia la existencia de la base
+        }
       });
       meta.movimientos = hm;
     }
+    var inv2 = descontarInventario(); res.inventario = inv2.descontados; res.regresados = inv2.regresados;
     meta.hashes = hashes; meta.lastSync = ahora; meta.source = fuente;
     fsReplace('sc_config', 'meta', meta, fsGet('sc_config', 'meta'));
-    if (res.creadas || res.actualizadas || res.estatus || res.conflictos || res.articulos || res.existencias || res.descuentos) { var y = rid('SYN'); fsCreate('sc_sync', y, { id: y, at: ahora, requestNo: null, action: 'SYNC', detail: JSON.stringify(res), source: fuente }); }
+    if (res.creadas || res.actualizadas || res.estatus || res.conflictos || res.articulos || res.existencias || res.descuentos || res.inventario || res.regresados) { var y = rid('SYN'); fsCreate('sc_sync', y, { id: y, at: ahora, requestNo: null, action: 'SYNC', detail: JSON.stringify(res), source: fuente }); }
     return res;
   } finally { lock.releaseLock(); }
+}
+
+/* ------------------------------------------------------------------ inventario de la plataforma */
+// Igual que js/domain/inventory.js (reconcileInventory): cada folio creado desde ajustes.inventoryFrom se descuenta al
+// llegar, línea por línea, del artículo del mismo modelo y color (prefiriendo corte o pieza completa). Si el folio se
+// cancela o se excluye, las piezas regresan. Mismos ids que la plataforma: nunca se descuenta dos veces.
+function ubicacion(loc) { var m = String(loc || '').match(/mueble\s*([A-Z0-9]+)\s*·?\s*pos\.?\s*([0-9.]+)/i); return m ? { mueble: m[1].toUpperCase(), pos: m[2] } : null; }
+function moverFisico(it, delta) {
+  var u = ubicacion(it.location); if (!u) return;
+  var f = fsGet('sc_config', 'fisico'); if (!f || !f.rows) return;
+  var n = JSON.parse(JSON.stringify(f)), cambio = false;
+  n.rows.forEach(function (x) { if (String(x.cabinet).toUpperCase() === u.mueble && String(x.position) === u.pos && norm(x.model) === norm(it.model) && norm(x.color) === norm(it.color) && typeof x.quantity === 'number') { x.quantity = Math.max(0, x.quantity + delta); cambio = true; } });
+  if (cambio) fsReplace('sc_config', 'fisico', n, f);
+}
+function descontarInventario() {
+  var res = { descontados: 0, regresados: 0 }, aj = fsGet('sc_config', 'ajustes'), desde = aj && aj.inventoryFrom, ahora = new Date().toISOString();
+  if (!desde) { var na = aj ? JSON.parse(JSON.stringify(aj)) : {}; na.inventoryFrom = ahora; if (aj) fsReplace('sc_config', 'ajustes', na, aj); else fsCreate('sc_config', 'ajustes', na); return res; }
+  var movs = fsList('sc_movimientos'), devueltos = {};
+  movs.forEach(function (m) { if (m.type === 'RETURN' && m.source === 'AUTO') devueltos[m.ref] = true; });
+  var activos = movs.filter(function (m) { return m.source === 'AUTO' && m.type === 'ISSUE' && !devueltos[m.__id]; });
+  fsList('sc_solicitudes').forEach(function (req) {
+    var no = req.__id; if (!(String(req.createdAt || '') >= desde)) return;
+    var mios = activos.filter(function (m) { return m.requestNo === no; });
+    if (req.status === 'CANCELLED' || req.inventoryExcluded) {
+      var porque = req.inventoryExcluded ? 'Request excluded from inventory' : 'Request cancelled';
+      mios.forEach(function (m) {
+        var id = 'MOV-RET-' + m.__id.replace(/^MOV-/, ''), it = m.itemId ? fsGet('sc_inventario', m.itemId) : null;
+        if (!fsCreate('sc_movimientos', id, { id: id, ref: m.__id, at: ahora, type: 'RETURN', source: 'AUTO', itemId: m.itemId, qty: m.qty, requestNo: no, line: m.line, area: 'SYSTEM', model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, before: it ? it.onHand : null, after: it ? it.onHand + m.qty : null, note: porque })) return;
+        if (it) { var ni = JSON.parse(JSON.stringify(it)); ni.onHand = it.onHand + m.qty; fsReplace('sc_inventario', m.itemId, ni, it); moverFisico(it, m.qty); }
+      });
+      if (mios.length) { nuevoEvento(no, 'Inventory returned (' + porque + ')', ahora); res.regresados++; }
+      return;
+    }
+    var hubo = false;
+    (req.lines || []).forEach(function (line) {
+      if (!(line.pieces > 0) || mios.some(function (m) { return m.line === line.line; })) return;
+      var corte = /cut/i.test(line.pieceSize || '');
+      var cands = fsList('sc_inventario').filter(function (i) { return norm(i.model) === norm(line.model) && norm(i.color) === norm(line.color) && i.onHand > 0; })
+        .map(function (i) { i.pref = corte ? /CUT/i.test(i.sampleType) : /STANDARD/i.test(i.sampleType); return i; })
+        .sort(function (a, b) { return Number(b.pref) - Number(a.pref) || Number(b.onHand >= line.pieces) - Number(a.onHand >= line.pieces) || b.onHand - a.onHand; });
+      if (!cands.length) return;
+      var iid = cands[0].__id, it = fsGet('sc_inventario', iid), qty = Math.min(line.pieces, it.onHand);
+      var n = movs.filter(function (m) { return m.source === 'AUTO' && m.type === 'ISSUE' && m.requestNo === no && m.line === line.line; }).length + 1;
+      var id = 'MOV-AUTO-' + no + '-L' + line.line + '-' + n, nota = 'Automatic deduction on request arrival' + (qty < line.pieces ? ' — only ' + qty + ' of ' + line.pieces + ' in stock' : '');
+      if (!fsCreate('sc_movimientos', id, { id: id, at: ahora, type: 'ISSUE', source: 'AUTO', itemId: iid, qty: qty, requestNo: no, line: line.line, area: 'SYSTEM', model: it.model, color: it.color, sampleType: it.sampleType, location: it.location, before: it.onHand, after: it.onHand - qty, note: nota })) return;
+      var ni = JSON.parse(JSON.stringify(it)); ni.onHand = it.onHand - qty; fsReplace('sc_inventario', iid, ni, it); moverFisico(it, -qty);
+      hubo = true; res.descontados++;
+    });
+    if (hubo) nuevoEvento(no, 'Inventory deducted automatically on request arrival', ahora);
+  });
+  return res;
 }
 
 /* ------------------------------------------------------------------ 2. recordatorios de avisos */

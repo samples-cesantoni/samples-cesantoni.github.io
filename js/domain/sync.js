@@ -1,7 +1,7 @@
 // Upserts data read from the original Sample Request base. The source is never written.
 // Identity = request number + REQUEST ID; numbering is preserved exactly as received.
-// The base is the authority for: request data, its status changes, dates, tracking and
-// inventory (it deducts stock per request itself — the platform never deducts again).
+// The base is the authority for: request data, its status changes, dates and tracking. Inventory is kept
+// by the platform since settings.inventoryFrom (see domain/inventory.js).
 import { logEvent } from './common.js';
 import { STATUSES } from './catalog.js';
 import { norm } from './sheet-parse.js';
@@ -72,23 +72,31 @@ function applySourceSnapshot(d, { requests = [], tracking = [], operation = [], 
     }
   }
 
-  // Inventory: the base is the authority (it deducts per request). Items are never deleted.
+  // Inventory. Before the switch (settings.inventoryFrom) the base was the authority and was mirrored.
+  // Since the switch the platform keeps the stock: the base only adds new catalog items and the
+  // deductions it made for requests older than the switch. Items are never deleted.
+  const from = d.settings && d.settings.inventoryFrom;
+  const createdNow = new Set();
   for (const it of catalog.items) {
     const ex = d.inventory[it.itemId];
-    if (!ex) { d.inventory[it.itemId] = { ...it, sourceOnHand: it.onHand, reserved: 0, inSource: true, importedAt: at }; summary.itemsCreated += 1; continue; }
-    const next = { ...ex, ...it, sourceOnHand: it.onHand, inSource: true };
+    if (!ex) { d.inventory[it.itemId] = { ...it, sourceOnHand: it.onHand, reserved: 0, inSource: true, importedAt: at }; createdNow.add(it.itemId); summary.itemsCreated += 1; continue; }
+    const next = { ...ex, ...it, onHand: from ? ex.onHand : it.onHand, sourceOnHand: it.onHand, inSource: true };
     if (JSON.stringify(next) !== JSON.stringify(ex)) { Object.assign(ex, next); summary.itemsUpdated += 1; }
   }
   const seen = new Set(catalog.items.map((i) => i.itemId));
   for (const ex of Object.values(d.inventory)) if (!seen.has(ex.itemId) && catalog.items.length && ex.inSource !== false) ex.inSource = false;
-  if (catalog.physical.length && JSON.stringify(catalog.physical) !== JSON.stringify(d.physicalInventory)) d.physicalInventory = catalog.physical;
+  if (catalog.physical.length && (!from || !(d.physicalInventory || []).length) && JSON.stringify(catalog.physical) !== JSON.stringify(d.physicalInventory)) d.physicalInventory = catalog.physical;
 
   // Deductions applied by the base ("MOVIMIENTOS INVENTARIO"), shown as movements of the request.
   const known = new Set(d.movements.map((m) => m.id));
   for (const m of moves) {
     if (known.has(m.id)) continue;
+    const req = d.requests[m.requestNo];
+    if (from && req && String(req.createdAt || '') >= from) continue; // deducted by the platform itself
     const item = matchItem(d, m);
-    d.movements.push({ id: m.id, at: m.at || at, type: 'ISSUE', itemId: item ? item.itemId : null, qty: m.qty, requestNo: m.requestNo, area: 'SYSTEM', source: 'BASE', model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, before: m.before, after: m.after, note: m.note || 'Deducted by the Sample Request base' });
+    let { before, after } = m;
+    if (from && item && !createdNow.has(item.itemId)) { before = item.onHand; item.onHand = Math.max(0, item.onHand - (m.qty || 0)); after = item.onHand; } // not mirrored anymore
+    d.movements.push({ id: m.id, at: m.at || at, type: 'ISSUE', itemId: item ? item.itemId : null, qty: m.qty, requestNo: m.requestNo, area: 'SYSTEM', source: 'BASE', model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, before, after, note: m.note || 'Deducted by the Sample Request base' });
     summary.moves += 1;
   }
 

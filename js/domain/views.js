@@ -42,6 +42,7 @@ function detail(ctx, req, area) {
     lines: lineAllocation(d, no).map((l) => ({ ...l, candidates: l.candidates.map(({ itemId, model, color, format, sampleType, location, available, onHand, reserved, sku, preferred }) => ({ itemId, model, color, format, sampleType, location, available, onHand, reserved, sku, preferred })) })),
     checklist: checklist(d, req), evidence, shipment: d.shipments[no] || null,
     observationsList: req.observations || [], statusDates: req.statusDates || {},
+    inventoryExcluded: Boolean(req.inventoryExcluded), inventoryByPlatform: Boolean(d.settings?.inventoryFrom && String(req.createdAt || '') >= d.settings.inventoryFrom),
     history: d.statusHistory.filter((h) => h.requestNo === no).map(({ id, from, to, at, area: a, notes, exception }) => ({ id, from, to, at, area: a === 'BODEGA' ? 'Warehouse' : a === 'SYSTEM' ? 'System' : a, notes, exception })),
     events: d.events.filter((e) => e.requestNo === no),
     times: requestTimes(ctx, req),

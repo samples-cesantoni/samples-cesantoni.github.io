@@ -319,6 +319,8 @@ on('GET', '/inventory/movements', (q) => ({
   movements: store.d.movements.filter((m) => !q.itemId || m.itemId === q.itemId).slice().sort((x, y) => String(x.at).localeCompare(String(y.at))).slice(-300).reverse()
     .map((m) => ({ ...m, area: m.area === 'BODEGA' ? 'Warehouse' : m.area, item: store.d.inventory[m.itemId] ? `${store.d.inventory[m.itemId].model} · ${store.d.inventory[m.itemId].color}` : [m.model, m.color].filter(Boolean).join(' · ') || m.itemId })),
 }));
+on('POST', '/inventory/adjust', (q, b) => store.mutate((d) => inventory.adjustStock(d, b, store.area), 'INVENTORY_ADJUST'), ces);
+on('POST', '/requests/:no/inventory-exclusion', (q, b, [no]) => store.mutate((d) => { const r = inventory.setInventoryExclusion(d, no, b.excluded); inventory.reconcileInventory(d); return r; }, 'INVENTORY_EXCLUSION'), ces);
 for (const op of ['reserve', 'release', 'issue']) on('POST', `/inventory/${op}`, (q, b) => store.mutate((d) => inventory[op](d, b, store.area), `INVENTORY_${op.toUpperCase()}`));
 
 on('POST', '/files', (q, b, p, form) => uploadFile(form));
@@ -440,6 +442,8 @@ export async function handle(method, path, { body, form } = {}) {
   if (r.ces && store.area !== 'CESANTONI') throw new AppError(403, 'FORBIDDEN', 'Your profile does not have access to this function');
   try {
     await store.refresh(method !== 'GET');
+    // The platform keeps the inventory: deduct new requests on arrival, give back cancelled / excluded ones.
+    if (store.area === 'CESANTONI' && inventory.needsReconcile(store.d)) await store.mutate((d) => inventory.reconcileInventory(d), 'INVENTORY_AUTO').catch(() => null);
     // Automatic status changes (Warehouse tracking + label, UPS): the customer email goes out automatically.
     if (store.area === 'CESANTONI' && status.pendingAuto(store.d).length) {
       const ids = await store.mutate((d) => status.queueAutoEmails(ctx, d), 'AUTO_EMAIL').catch(() => []);

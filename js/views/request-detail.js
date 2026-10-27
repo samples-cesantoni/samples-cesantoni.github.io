@@ -61,7 +61,9 @@ export async function render(el, ctx) {
   }
 
   function inventory() {
-    return raw(html`<div class="callout info" style="margin-bottom:18px">${icon('info')}<span>${t('det.baseDeducts')}</span></div>`.s + det.lines.map((l) => html`<div class="card" data-line="${l.line}">
+    const head = html`<div class="callout info" style="margin-bottom:18px">${icon('info')}<span>${det.inventoryExcluded ? t('det.invExcluded') : det.inventoryByPlatform ? t('det.platformDeducts') : t('det.baseDeducts')}</span></div>
+      ${area === 'CESANTONI' ? html`<label class="check" style="margin-bottom:18px"><input type="checkbox" data-invex ${det.inventoryExcluded ? 'checked' : ''}><span>${t('det.invExclude')}</span></label>` : ''}`.s;
+    return raw(head + det.lines.map((l) => html`<div class="card" data-line="${l.line}">
       <div class="card-head"><div><h2>${l.line}. ${l.model}${l.color ? ` · ${l.color}` : ''}</h2><p>${l.pieceSize} · ${t('common.qty')}: ${l.pieces} · ${t('det.deducted')}: ${l.deductedQty}</p></div>
         ${l.deductedQty >= l.pieces ? html`<span class="badge green">${t('det.deductedOk')}</span>` : l.shortage ? html`<span class="badge red">${t('det.shortage')}</span>` : html`<span class="badge amber">${t('det.notDeducted')}</span>`}</div>
       ${l.deductions.length ? html`<div class="table-wrap" style="margin-bottom:14px"><table class="t cards"><thead><tr><th>${t('common.date')}</th><th>${t('common.location')}</th><th>${t('inv.type')}</th><th class="num">${t('common.qty')}</th><th class="num">${t('det.stockMove')}</th></tr></thead><tbody>
@@ -150,6 +152,9 @@ export async function render(el, ctx) {
       const card = el.querySelector(`[data-line="${CSS.escape(ctx.query.line)}"]`);
       if (card) { card.classList.add('focus-line'); setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50); }
     }
+    el.querySelector('[data-invex]')?.addEventListener('change', async (e) => {
+      try { await api(`/requests/${encodeURIComponent(no)}/inventory-exclusion`, { method: 'POST', body: { excluded: e.target.checked } }); toast(t('common.saved'), 'ok'); reload(); } catch (err) { errToast(err); }
+    });
     // uploaders
     el.querySelectorAll('[data-uploader]').forEach((u) => mountUploader(u, { requestNo: no, types: u.dataset.types.split(','), meta: ctx.meta, onSaved: reload }));
     const evRoot = el.querySelector('[data-body]');
