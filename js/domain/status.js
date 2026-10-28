@@ -107,17 +107,34 @@ function autoShip(d, requestNo) {
   if (!req || !AUTO_SHIP_FROM.includes(req.status) || ![null, undefined, '', 'COURIER'].includes(req.deliveryMode)) return null;
   if (!d.shipments[requestNo]?.trackingNo) return null;
   if (!d.evidence.some((e) => e.requestNo === requestNo && e.type === 'SHIPPING_LABEL_PHOTO' && !e.supersededBy && e.state !== 'RETURNED')) return null;
+  return autoMove(d, req, 'SHIPPED', 'tracking number and shipping label photo registered');
+}
+function autoMove(d, req, to, why) {
   const at = new Date().toISOString();
   const from = req.status;
-  req.status = 'SHIPPED';
+  req.status = to;
   req.statusChangedAt = at;
   req.statusDates = { ...(req.statusDates || {}) };
-  if (!req.statusDates.SHIPPED) req.statusDates.SHIPPED = at;
-  const entry = { id: rid('STH'), requestNo, from, to: 'SHIPPED', at, area: 'SYSTEM', auto: true, notes: 'Automatic: tracking number and shipping label photo registered', exception: null };
+  if (!req.statusDates[to]) req.statusDates[to] = at;
+  const entry = { id: rid('STH'), requestNo: req.requestNo, from, to, at, area: 'SYSTEM', auto: true, notes: `Automatic: ${why}`, exception: null };
   d.statusHistory.push(entry);
-  logEvent(d, { requestNo, event: `Status updated automatically: ${STATUS_LABEL[from]} → ${STATUS_LABEL.SHIPPED} (tracking and label registered)`, area: 'SYSTEM', at });
+  logEvent(d, { requestNo: req.requestNo, event: `Status updated automatically: ${STATUS_LABEL[from]} → ${STATUS_LABEL[to]} (${why})`, area: 'SYSTEM', at });
   d.sheetOutbox.push({ kind: 'STATUS_HISTORY', historyId: entry.id, at });
   return entry;
+}
+
+// Automatic preparation statuses from the Warehouse evidence (status only, no customer email):
+// first preparation photo → Preparing; material + preparation photo + quantity confirmation, or any
+// packaging evidence → Prepared. Never moves a request backwards.
+function autoPrepare(d, requestNo) {
+  const req = d.requests[requestNo];
+  if (!req || !['RECEIVED', 'PREPARING'].includes(req.status)) return null;
+  const ev = d.evidence.filter((e) => e.requestNo === requestNo && !e.supersededBy && e.state !== 'RETURNED');
+  const has = (types) => ev.some((e) => types.includes(e.type));
+  const prepared = (has(['MATERIAL_PHOTO', 'SEPARATED_PRODUCTS_PHOTO']) && has(['PREPARATION_PHOTO']) && has(['QUANTITY_CONFIRMATION'])) || ev.some((e) => e.stage === 'PACKAGING');
+  if (prepared) return autoMove(d, req, 'PREPARED', 'preparation evidence complete');
+  if (req.status === 'RECEIVED' && ev.some((e) => e.stage === 'PREPARATION')) return autoMove(d, req, 'PREPARING', 'preparation started');
+  return null;
 }
 
 // CESANTONI session: create the customer email of each automatic change once; the caller sends it.
@@ -147,4 +164,4 @@ function setDeliveryMode(d, requestNo, mode, area) {
   return { request: req };
 }
 
-export { requirements, consistency, previewChange, changeStatus, setDeliveryMode, autoShip, queueAutoEmails, pendingAuto };
+export { requirements, consistency, previewChange, changeStatus, setDeliveryMode, autoShip, autoPrepare, queueAutoEmails, pendingAuto };

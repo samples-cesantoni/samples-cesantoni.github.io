@@ -345,12 +345,14 @@ service cloud.firestore {
     }
 
     // Solicitudes (sincronizadas del formulario original). Bodega agrega observaciones; el estatus oficial es de CESANTONI,
-    // salvo el cambio automático a «Shipped» cuando el folio ya tiene guía capturada (y foto de la guía).
+    // salvo los cambios automáticos hacia adelante: Preparing / Prepared (evidencias de preparación) y Shipped (guía + foto de la guía).
     function scAutoEnvio(no) {
-      return resource.data.status in ['RECEIVED', 'PREPARING', 'PREPARED'] && request.resource.data.status == 'SHIPPED' &&
-        resource.data.get('deliveryMode', null) in [null, '', 'COURIER'] &&
-        scSolo(['status', 'statusChangedAt', 'statusDates', '_v', '_u']) &&
-        getAfter(/databases/$(database)/documents/sc_envios/$(no)).data.get('trackingNo', '') != '';
+      return scSolo(['status', 'statusChangedAt', 'statusDates', '_v', '_u']) && (
+        (resource.data.status in ['RECEIVED', 'PREPARING', 'PREPARED'] && request.resource.data.status == 'SHIPPED' &&
+         resource.data.get('deliveryMode', null) in [null, '', 'COURIER'] &&
+         getAfter(/databases/$(database)/documents/sc_envios/$(no)).data.get('trackingNo', '') != '') ||
+        (resource.data.status == 'RECEIVED' && request.resource.data.status == 'PREPARING') ||
+        (resource.data.status in ['RECEIVED', 'PREPARING'] && request.resource.data.status == 'PREPARED'));
     }
     match /sc_solicitudes/{no} {
       allow read: if scStaff();
@@ -407,9 +409,9 @@ service cloud.firestore {
     match /sc_historial/{id} {
       allow read: if scStaff();
       allow create: if (scCes() && request.resource.data.area in ['CESANTONI', 'SYSTEM']) ||
-        (scBod() && request.resource.data.area == 'SYSTEM' && request.resource.data.auto == true && request.resource.data.to == 'SHIPPED' &&
-         get(/databases/$(database)/documents/sc_solicitudes/$(request.resource.data.requestNo)).data.status != 'SHIPPED' &&
-         getAfter(/databases/$(database)/documents/sc_solicitudes/$(request.resource.data.requestNo)).data.status == 'SHIPPED');
+        (scBod() && request.resource.data.area == 'SYSTEM' && request.resource.data.auto == true && request.resource.data.to in ['PREPARING', 'PREPARED', 'SHIPPED'] &&
+         get(/databases/$(database)/documents/sc_solicitudes/$(request.resource.data.requestNo)).data.status != request.resource.data.to &&
+         getAfter(/databases/$(database)/documents/sc_solicitudes/$(request.resource.data.requestNo)).data.status == request.resource.data.to);
     }
     // Bitácora visible: solo áreas, nunca personas. No se modifica ni se borra.
     match /sc_eventos/{id} {

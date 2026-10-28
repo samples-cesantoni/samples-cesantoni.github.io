@@ -1,7 +1,7 @@
 import { rid } from './common.js';
 import { AppError, logEvent, getRequest, once } from './common.js';
 import { EVIDENCE_STAGE, EVIDENCE_LABEL, CARRIERS } from './catalog.js';
-import { autoShip } from './status.js';
+import { autoShip, autoPrepare } from './status.js';
 
 function addEvidence(d, { requestNo, type, fileId, notes, data, replacesId, eventAt, opKey }, area) {
   return once(d, opKey, () => {
@@ -27,7 +27,8 @@ function addEvidence(d, { requestNo, type, fileId, notes, data, replacesId, even
     if (replaced) replaced.supersededBy = e.id;
     logEvent(d, { requestNo, event: `${EVIDENCE_LABEL[type]} uploaded${replaced ? ' (correction)' : ''}`, area });
     d.sheetOutbox.push({ kind: 'EVIDENCE_LOG', evidenceId: e.id, at: e.uploadedAt });
-    const auto = type === 'SHIPPING_LABEL_PHOTO' ? autoShip(d, requestNo) : null;
+    // one automatic step per upload (the rules accept a single status change per write)
+    const auto = (type === 'SHIPPING_LABEL_PHOTO' ? autoShip(d, requestNo) : null) || autoPrepare(d, requestNo);
     return { evidence: e, autoStatus: auto ? auto.to : null };
   });
 }

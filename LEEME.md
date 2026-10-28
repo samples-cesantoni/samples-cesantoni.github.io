@@ -64,6 +64,12 @@ El registro técnico de quién hizo qué se guarda en `sc_seguridad`, que solo l
 - Para las fotos cuyo nombre no dice qué son, se elige un tipo para todas («Tipo para las fotos sin tipo») o foto por foto.
 - Una foto que ya se subió al mismo folio y tipo se salta sola, aunque se vuelva a cargar el mismo ZIP.
 
+## Estatus automáticos (sin correo): Preparing y Prepared
+
+- Primera evidencia de preparación de un folio en *Received* → **Preparing**.
+- Foto de material (o productos separados) + foto de preparación + confirmación de cantidades, o cualquier evidencia de embalaje → **Prepared**.
+- Solo cambian el estatus (no mandan correo) y nunca regresan un folio a un estatus anterior. Quedan en el historial como *System*.
+
 ## Estatus automático «Shipped»
 
 Cuando un folio tiene **número de guía capturado y foto de la guía** (en cualquier orden, la capture Bodega o CESANTONI), pasa solo a **Shipped**
