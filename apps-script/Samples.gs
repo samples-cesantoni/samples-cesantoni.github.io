@@ -4,7 +4,8 @@
  *  1. sincronizar()   cada 15 min: lee «Base Sample Request CESANTONI - English» (solo lectura) y crea en Firestore
  *                     las solicitudes nuevas (sc_solicitudes) con su folio original, el catálogo y el inventario físico.
  *  2. recordatorios() cada hora: envía los recordatorios programados de los avisos operativos (sc_avisos).
- *  4. rastreo()       cada 30 min: estatus de UPS (Track API), cambios automáticos In Transit / Delivered y correo de cada cambio automático.
+ *  4. rastreo()       cada 15 min: estatus de UPS (Track API si hay credenciales, y avisos de UPS que llegan a este Gmail),
+ *                     cambios automáticos In Transit / Delivered y correo de cada cambio automático.
  *  3. volcarSalida()  cada 30 min: copia historial, evidencias, correos y operación a «Base Sample Evidence & Costs»
  *                     (agrega filas; antes verifica los encabezados). Apagado hasta que CONFIG.ESCRIBIR_EN_BASE sea true.
  *
@@ -27,7 +28,7 @@ function instalar() {
   ScriptApp.newTrigger('sincronizar').timeBased().everyMinutes(15).create();
   ScriptApp.newTrigger('recordatorios').timeBased().everyHours(1).create();
   ScriptApp.newTrigger('volcarSalida').timeBased().everyMinutes(30).create();
-  ScriptApp.newTrigger('rastreo').timeBased().everyMinutes(30).create();
+  ScriptApp.newTrigger('rastreo').timeBased().everyMinutes(15).create();
   sincronizar();
 }
 
@@ -435,7 +436,7 @@ function recordatorios() {
 }
 
 /* ------------------------------------------------------------------ 4. rastreo UPS y avisos automáticos de estatus */
-// rastreo() cada 30 min: consulta UPS (Track API) por cada folio con guía UPS que aún no se entrega. Guarda el estatus
+// rastreo() cada 15 min: consulta UPS (Track API, si hay credenciales) y lee los avisos de UPS del Gmail de este script. Guarda el estatus
 // de la paquetería y la fecha estimada, y mueve el folio solo: Shipped → In Transit → Delivered (queda como System).
 // Después envía el correo al cliente de cada cambio automático (Shipped y Delivered), respetando el modo PRUEBA/PRODUCCIÓN.
 // Credenciales de UPS (developer.ups.com): Configuración del proyecto › Propiedades del script › UPS_CLIENT_ID y UPS_CLIENT_SECRET.
@@ -484,6 +485,73 @@ function cambioAutomatico(no, a, nota) { // estatus automático: historial (auto
   nuevoEvento(no, 'Status updated automatically: ' + ESTATUS_ETIQUETA[de] + ' → ' + ESTATUS_ETIQUETA[a] + ' (' + nota.replace(/^Automatic: /, '') + ')', ahora);
   return true;
 }
+// Guarda el estatus de la paquetería en el envío y mueve el folio: UPS en tránsito → In Transit; entregado → Delivered.
+function aplicarPaqueteria(no, req, u) {
+  var prev = fsGet('sc_envios', no); if (!prev) return 0;
+  if (prev.carrierStatus && prev.carrierStatus.at && u.at && u.at < prev.carrierStatus.at) return 0; // un aviso más viejo no pisa uno nuevo
+  var env = JSON.parse(JSON.stringify(prev));
+  env.carrierStatus = { type: u.type, code: u.code || '', description: u.description, at: u.at, location: u.location || '', checkedAt: new Date().toISOString(), source: u.source || 'UPS API' };
+  if (u.estimated && u.type !== 'D') { env.estimatedDate = u.estimated; env.estimateConfirmed = true; }
+  if (u.type === 'D' && !env.deliveredAt) env.deliveredAt = u.deliveredOn || u.at;
+  fsReplace('sc_envios', no, env, prev);
+  if (u.type === 'D' && ['SHIPPED', 'IN_TRANSIT'].indexOf(req.status) >= 0) return cambioAutomatico(no, 'DELIVERED', 'Automatic: UPS reports delivered') ? 1 : 0;
+  if (['I', 'P', 'O'].indexOf(u.type) >= 0 && req.status === 'SHIPPED') return cambioAutomatico(no, 'IN_TRANSIT', 'Automatic: UPS reports in transit') ? 1 : 0;
+  return 0;
+}
+// Avisos de UPS que llegan al Gmail de la cuenta dueña de este script (UPS My Choice / notificaciones de envío).
+// Solo lee correos de ups.com de los últimos días; no los modifica. Reconoce la guía 1Z… y el tipo de aviso.
+function leerAvisoUps(asunto, cuerpo) {
+  var t = (asunto + '\n' + cuerpo).toUpperCase();
+  var guias = {}; (t.match(/1Z(?:[ \t]?[0-9A-Z]){16}/g) || []).forEach(function (g) { guias[g.replace(/\s+/g, '')] = true; });
+  var a = asunto.toLowerCase(), c = cuerpo.toLowerCase(), tipo = null, desc = '';
+  if (/delivered/.test(a) && !/(will be|to be|scheduled|expected|estimated)[^.]{0,30}deliver/.test(a)) { tipo = 'D'; desc = 'Delivered'; }
+  else if (/exception|delay|unable to deliver|returned to sender|return to sender/.test(a)) { tipo = 'X'; desc = 'Exception'; }
+  else if (/out for delivery/.test(a + ' ' + c.slice(0, 600))) { tipo = 'O'; desc = 'Out for Delivery'; }
+  else if (/on the way|in transit|scheduled for delivery|arriving|departed|arrived|picked up|update/.test(a)) { tipo = 'I'; desc = 'In Transit'; }
+  else if (/ship notification|label created|shipment details|has shipped|shipped/.test(a)) { tipo = 'M'; desc = 'Label Created'; }
+  if (!tipo && /delivered/.test(c) && /(your package|package was|has been) delivered|delivered on/.test(c)) { tipo = 'D'; desc = 'Delivered'; }
+  var est = (cuerpo.match(/(?:scheduled|estimated)\s+delivery[^0-9]{0,40}(\d{1,2})\/(\d{1,2})\/(\d{4})/i) || []);
+  return { guias: Object.keys(guias), type: tipo, description: desc, estimated: est.length ? est[3] + '-' + ('0' + est[1]).slice(-2) + '-' + ('0' + est[2]).slice(-2) : '' };
+}
+// Gmail API de solo lectura (permiso gmail.readonly): busca, no modifica ni borra nada.
+function gmailUps() {
+  var api = 'https://gmail.googleapis.com/gmail/v1/users/me/messages', h = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() };
+  var r = UrlFetchApp.fetch(api + '?maxResults=100&q=' + encodeURIComponent('from:ups.com newer_than:7d'), { headers: h, muteHttpExceptions: true });
+  if (r.getResponseCode() >= 300) throw new Error('Gmail ' + r.getResponseCode() + ': ' + r.getContentText().slice(0, 200));
+  return (JSON.parse(r.getContentText()).messages || []).map(function (x) {
+    var m = JSON.parse(UrlFetchApp.fetch(api + '/' + x.id + '?format=full', { headers: h, muteHttpExceptions: true }).getContentText());
+    var hd = {}; ((m.payload || {}).headers || []).forEach(function (y) { hd[y.name.toLowerCase()] = y.value; });
+    var texto = '', html = '';
+    (function partes(p) {
+      if (!p) return;
+      if (p.body && p.body.data) { var d = Utilities.newBlob(Utilities.base64DecodeWebSafe(p.body.data)).getDataAsString('UTF-8'); if (/text\/plain/i.test(p.mimeType)) texto += d; else if (/text\/html/i.test(p.mimeType)) html += d; }
+      (p.parts || []).forEach(partes);
+    })(m.payload);
+    if (!texto) texto = html.replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+    return { subject: hd.subject || '', from: hd.from || '', date: new Date(Number(m.internalDate) || Date.parse(hd.date)), body: texto };
+  });
+}
+function correosUps() {
+  var res = { leidos: 0, cambios: 0 };
+  var porGuia = {}, solicitudes = {};
+  fsList('sc_envios').forEach(function (s) { if (s.trackingNo) porGuia[String(s.trackingNo).toUpperCase()] = s.__id; });
+  fsList('sc_solicitudes').forEach(function (r) { solicitudes[r.__id] = r; });
+  var mensajes = gmailUps();
+  mensajes.sort(function (x, y) { return x.date - y.date; }); // del más viejo al más nuevo: queda el último aviso
+  mensajes.forEach(function (m) {
+    if (!/ups\.com/i.test(m.from)) return;
+    var u = leerAvisoUps(m.subject, m.body); if (!u.type) return;
+    u.at = Utilities.formatDate(m.date, CONFIG.ZONA, "yyyy-MM-dd'T'HH:mm:ss"); u.source = 'UPS email';
+    u.guias.forEach(function (g) {
+      var no = porGuia[g], req = no && solicitudes[no]; if (!req || ['CANCELLED'].indexOf(req.status) >= 0) return;
+      res.leidos++;
+      var n = aplicarPaqueteria(no, req, u); res.cambios += n;
+      if (n) solicitudes[no] = fsGet('sc_solicitudes', no);
+    });
+  });
+  return res;
+}
+
 function rastreo() {
   var lock = LockService.getScriptLock(); if (!lock.tryLock(30000)) return;
   var res = { consultadas: 0, cambios: 0, errores: 0 };
@@ -496,17 +564,10 @@ function rastreo() {
         if (!req || s.carrier !== 'UPS' || !s.trackingNo || ['DELIVERED', 'CANCELLED', 'ON_HOLD'].indexOf(req.status) >= 0) return;
         var u;
         try { u = consultarUps(token, s.trackingNo); res.consultadas++; } catch (e) { res.errores++; return; }
-        if (!u) return;
-        var nuevo = { type: u.type, code: u.code, description: u.description, at: u.at, location: u.location, checkedAt: new Date().toISOString() };
-        var prev = fsGet('sc_envios', no), env = JSON.parse(JSON.stringify(prev));
-        env.carrierStatus = nuevo;
-        if (u.estimated && u.type !== 'D') { env.estimatedDate = u.estimated; env.estimateConfirmed = true; }
-        if (u.type === 'D' && !env.deliveredAt) env.deliveredAt = u.deliveredOn || u.at;
-        fsReplace('sc_envios', no, env, prev);
-        if (u.type === 'D' && ['SHIPPED', 'IN_TRANSIT'].indexOf(req.status) >= 0) { if (cambioAutomatico(no, 'DELIVERED', 'Automatic: UPS reports delivered')) res.cambios++; }
-        else if (['I', 'P', 'O'].indexOf(u.type) >= 0 && req.status === 'SHIPPED') { if (cambioAutomatico(no, 'IN_TRANSIT', 'Automatic: UPS reports in transit')) res.cambios++; }
+        if (u) res.cambios += aplicarPaqueteria(no, req, u);
       });
     }
+    try { var cu = correosUps(); res.correosUps = cu.leidos; res.cambios += cu.cambios; } catch (e) { res.errorGmail = String(e.message || e).slice(0, 300); console.error('Avisos UPS en Gmail: ' + res.errorGmail); }
     res.correos = avisosAutomaticos();
     return res;
   } finally { lock.releaseLock(); }

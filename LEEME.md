@@ -72,7 +72,10 @@ Las reglas de Firestore permiten a Bodega únicamente ese cambio, y solo si el f
 
 ## Rastreo UPS y correos automáticos
 
-- El Apps Script (`rastreo`, cada 30 min) consulta UPS por cada folio con guía UPS que no se ha entregado. En *Envíos y guías* aparece la fecha y el estatus de la paquetería
+- **Avisos de UPS por correo (sin credenciales de UPS):** si los avisos de UPS («UPS Update: …», *Out for Delivery*, *Delivered*) llegan al Gmail
+  de la cuenta con la que se instaló el Apps Script, `rastreo` los lee cada 15 min (solo lectura, permiso `gmail.readonly`, solo correos de ups.com
+  de los últimos 7 días), reconoce la guía 1Z… y actualiza el folio igual que con la API. Si llegan a otra cuenta, reenvíalos a esa con un filtro de Gmail.
+- El Apps Script (`rastreo`, cada 15 min) consulta UPS por cada folio con guía UPS que no se ha entregado. En *Envíos y guías* aparece la fecha y el estatus de la paquetería
   (etiqueta azul; verde cuando se entrega), y la fecha estimada que da UPS queda marcada como «carrier».
 - UPS en tránsito → el folio pasa solo a **In Transit** (sin correo). UPS entregado → pasa a **Delivered** con la fecha de entrega.
 - El correo al cliente de cada cambio automático **Shipped** y **Delivered** sale solo, con las mismas reglas de PRUEBA / PRODUCCIÓN que cualquier correo.
