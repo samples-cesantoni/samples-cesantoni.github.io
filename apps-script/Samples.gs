@@ -375,7 +375,7 @@ function descontarInventario() {
     }
     var hubo = false;
     (req.lines || []).forEach(function (line) {
-      if (!(line.pieces > 0) || mios.some(function (m) { return m.line === line.line; })) return;
+      if (!(line.pieces > 0) || (req.excludedLines || []).indexOf(line.line) >= 0 || mios.some(function (m) { return m.line === line.line; })) return;
       var corte = /cut/i.test(line.pieceSize || '');
       var cands = fsList('sc_inventario').filter(function (i) { return norm(i.model) === norm(line.model) && norm(i.color) === norm(line.color) && i.onHand > 0; })
         .map(function (i) { i.pref = corte ? /CUT/i.test(i.sampleType) : /STANDARD/i.test(i.sampleType); return i; })

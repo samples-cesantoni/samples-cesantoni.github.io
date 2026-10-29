@@ -65,9 +65,10 @@ export async function render(el, ctx) {
       ${area === 'CESANTONI' ? html`<label class="check" style="margin-bottom:18px"><input type="checkbox" data-invex ${det.inventoryExcluded ? 'checked' : ''}><span>${t('det.invExclude')}</span></label>` : ''}`.s;
     return raw(head + det.lines.map((l) => html`<div class="card" data-line="${l.line}">
       <div class="card-head"><div><h2>${l.line}. ${l.model}${l.color ? ` · ${l.color}` : ''}</h2><p>${l.pieceSize} · ${t('common.qty')}: ${l.pieces} · ${t('det.deducted')}: ${l.deductedQty}</p></div>
-        ${l.deductedQty >= l.pieces ? html`<span class="badge green">${t('det.deductedOk')}</span>` : l.shortage ? html`<span class="badge red">${t('det.shortage')}</span>` : html`<span class="badge amber">${t('det.notDeducted')}</span>`}</div>
+        ${l.excludedLine || det.inventoryExcluded ? html`<span class="badge">${t('det.lineExcluded')}</span>` : l.deductedQty >= l.pieces ? html`<span class="badge green">${t('det.deductedOk')}</span>` : l.shortage ? html`<span class="badge red">${t('det.shortage')}</span>` : html`<span class="badge amber">${t('det.notDeducted')}</span>`}</div>
       ${l.deductions.length ? html`<div class="table-wrap" style="margin-bottom:14px"><table class="t cards"><thead><tr><th>${t('common.date')}</th><th>${t('common.location')}</th><th>${t('inv.type')}</th><th class="num">${t('common.qty')}</th><th class="num">${t('det.stockMove')}</th></tr></thead><tbody>
         ${raw(l.deductions.map((m) => html`<tr><td data-l="${t('common.date')}">${fmtDate(m.at, false)}</td><td data-l="${t('common.location')}">${m.location || '—'}</td><td data-l="${t('inv.type')}">${m.sampleType || '—'}</td><td data-l="${t('common.qty')}" class="num">${m.qty}</td><td data-l="${t('det.stockMove')}" class="num">${m.before ?? '—'} → ${m.after ?? '—'}</td></tr>`.s).join(''))}</tbody></table></div>` : ''}
+      ${area === 'CESANTONI' && !det.inventoryExcluded ? html`<label class="check small" style="margin:-4px 0 14px"><input type="checkbox" data-exline="${l.line}" ${l.excludedLine ? 'checked' : ''}><span>${t('det.exLine')}</span></label>` : ''}
       <h3 style="margin-bottom:8px">${t('det.candidates')}</h3>
       ${l.candidates.length ? html`<div class="table-wrap"><table class="t cards"><thead><tr><th>${t('common.sku')}</th><th>${t('inv.format')}</th><th>${t('inv.type')}</th><th>${t('common.location')}</th><th class="num">${t('inv.onHand')}</th></tr></thead><tbody>
         ${raw(l.candidates.map((c) => html`<tr><td data-l="${t('common.sku')}" class="mono">${c.sku || t('common.notRegistered')}</td><td data-l="${t('inv.format')}">${c.format}</td><td data-l="${t('inv.type')}">${c.sampleType} ${c.preferred ? raw(`<span class="badge orange">${esc(t('det.preferred'))}</span>`) : ''}</td><td data-l="${t('common.location')}">${c.location || '—'}</td><td data-l="${t('inv.onHand')}" class="num"><span class="${c.onHand <= 0 ? 'badge red' : ''}">${c.onHand}</span></td></tr>`.s).join(''))}</tbody></table></div>` : html`<div class="callout warn">${icon('alert')}<span>${t('det.noMatch')}</span></div>`}
@@ -152,6 +153,9 @@ export async function render(el, ctx) {
       const card = el.querySelector(`[data-line="${CSS.escape(ctx.query.line)}"]`);
       if (card) { card.classList.add('focus-line'); setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50); }
     }
+    el.querySelectorAll('[data-exline]').forEach((c) => c.addEventListener('change', async () => {
+      try { await api(`/requests/${encodeURIComponent(no)}/lines/${c.dataset.exline}/inventory-exclusion`, { method: 'POST', body: { excluded: c.checked } }); toast(t('common.saved'), 'ok'); reload(); } catch (err) { errToast(err); }
+    }));
     el.querySelector('[data-invex]')?.addEventListener('change', async (e) => {
       try { await api(`/requests/${encodeURIComponent(no)}/inventory-exclusion`, { method: 'POST', body: { excluded: e.target.checked } }); toast(t('common.saved'), 'ok'); reload(); } catch (err) { errToast(err); }
     });

@@ -57,6 +57,11 @@ El registro técnico de quién hizo qué se guarda en `sc_seguridad`, que solo l
 - **Cambios manuales en Sheets** (llegaron muestras, conteo, piezas rotas): si cambias la existencia en *PRODUCTS* de la base, la plataforma aplica
   esa diferencia en la siguiente sincronización (movimiento «Cambio en Sheets»). Lo que la base descuenta por sus folios no se aplica otra vez
   (queda como «Descuento de la base (no aplicado)»), porque la plataforma ya lo descontó al llegar.
+- **Folios o líneas que no se descuentan:** en la pestaña *Inventario y ubicación* del folio, CESANTONI marca «No descontar inventario de este folio»
+  o, por línea, «No descontar esta línea» (por ejemplo piezas completas que no salieron). Las piezas regresan al inventario, también si las había descontado la base.
+- **Inventario inicial:** *Configuración › Inventario inicial* recibe el Excel «Inventario inicial» (MODELO, COLOR, ACABADO, TAMAÑO DE MUESTRA, INVENTARIO;
+  una fila por mueble/posición, en el orden del inventario físico). Cada posición queda en inicial − lo descontado por los folios vigentes; el catálogo toma la
+  cantidad de su posición. Si la base tiene dos productos en la misma posición, se distinguen por el modelo.
 - **Entradas y conteos:** en *Inventario*, CESANTONI usa **Ajustar** en el artículo, escribe la nueva existencia y el motivo; queda registrado.
 - Lo hace la sesión de CESANTONI al abrir la plataforma o el Apps Script (`sincronizar`, cada 15 min), lo que ocurra primero; mismos ids, nunca dos veces.
 

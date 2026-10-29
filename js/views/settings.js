@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { t } from '../i18n.js';
-import { html, raw, icon, esc, fmtDate, fmtDay, toast, busy } from '../ui.js';
+import { html, raw, icon, esc, fmtDate, fmtDay, toast, busy, confirmDialog } from '../ui.js';
 
 export async function render(el, ctx) {
   let s = await api('/settings');
@@ -34,6 +34,8 @@ export async function render(el, ctx) {
         <details style="margin-bottom:14px"><summary class="small">Sync log (${sync.log.length})</summary><div class="small" style="max-height:220px;overflow:auto;margin-top:8px">${raw(sync.log.map((l) => `<div style="padding:4px 0;border-bottom:1px solid var(--line-2)">${esc(fmtDate(l.at))} · <strong>${esc(l.action)}</strong> ${esc(l.requestNo || '')} · ${esc(l.detail || '')}</div>`).join(''))}</div></details>
         <form data-import><h3>${t('set.import')}</h3><p class="hint">${t('set.importSub')}</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><input class="input" type="file" name="file" accept=".xlsx" style="max-width:320px" required><button class="btn btn-dark" type="submit">${icon('upload')}${t('set.importBtn')}</button></div></form>
+        <form data-initial style="margin-top:22px"><h3>${t('set.initial')}</h3><p class="hint">${t('set.initialSub')}</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><input class="input" type="file" name="file" accept=".xlsx" style="max-width:320px" required><button class="btn btn-dark" type="submit">${icon('upload')}${t('set.initialBtn')}</button></div></form>
       </div>
       ${se.rol === 'admin' ? html`<div class="card"><div class="card-head"><div><h2>${t('set.users')}</h2><p>${t('set.usersSub')}</p></div></div><div data-users class="muted">${t('common.loading')}</div>
         <form data-adduser class="form-grid" style="margin-top:14px"><label class="field"><span>${t('login.email')}</span><input class="input" type="email" name="correo" required></label>
@@ -61,6 +63,15 @@ export async function render(el, ctx) {
     el.querySelector('[data-import]').addEventListener('submit', (e) => {
       e.preventDefault(); const f = e.target; const fd = new FormData(); fd.append('file', f.file.files[0]);
       busy(f.querySelector('[type=submit]'), async () => { const r = await api('/sync/import', { method: 'POST', form: fd }); toast(`Created ${r.created} · updated ${r.updated} · unchanged ${r.unchanged} · catalog +${r.itemsCreated}`, 'ok', 8000); }).catch(() => {});
+    });
+    el.querySelector('[data-initial]').addEventListener('submit', async (e) => {
+      e.preventDefault(); const f = e.target;
+      if (!(await confirmDialog(t('set.initialConfirm')))) return;
+      const fd = new FormData(); fd.append('file', f.file.files[0]);
+      busy(f.querySelector('[type=submit]'), async () => {
+        const r = await api('/inventory/initial', { method: 'POST', form: fd });
+        toast(`${t('set.initialDone')}: ${r.matched}/${r.rows} · ${r.itemsChanged} ${t('set.initialItems')}${r.unmatched.length ? ` · ${t('set.initialMissing')}: ${r.unmatched.slice(0, 5).join(', ')}` : ''}`, r.unmatched.length ? 'err' : 'ok', 12000);
+      }).catch(() => {});
     });
     el.querySelector('[data-pw]').addEventListener('submit', (e) => { e.preventDefault(); const f = e.target; busy(f.querySelector('[type=submit]'), async () => { await api('/password', { method: 'POST', body: { actual: f.actual.value, nueva: f.nueva.value } }); f.reset(); toast(t('common.saved'), 'ok'); }).catch(() => {}); });
     if (se.rol === 'admin') {

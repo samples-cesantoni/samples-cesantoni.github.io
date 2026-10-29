@@ -216,6 +216,28 @@ async function importWorkbook(form) {
   return store.mutate((d) => applySourceSnapshot(d, snap, `Import: ${form.get('file').name}`), 'IMPORT');
 }
 
+// Inventario inicial (Excel «Inventario inicial - Houston»): MODELO, COLOR, ACABADO, TAMAÑO DE MUESTRA, INVENTARIO.
+async function importInitialInventory(form) {
+  const { excel } = await import('./services/exports.js');
+  const ExcelJS = await excel();
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await form.get('file').arrayBuffer());
+  const val = (v) => (v === null || v === undefined ? '' : typeof v === 'object' && !(v instanceof Date) ? ('result' in v ? val(v.result) : v.richText ? v.richText.map((x) => x.text).join('') : v.text || '') : v);
+  for (const ws of wb.worksheets) {
+    const rows = [];
+    ws.eachRow({ includeEmpty: false }, (row) => { const a = []; for (let c = 1; c <= Math.max(ws.columnCount, row.cellCount); c++) a.push(val(row.getCell(c).value)); rows.push(a); });
+    const hi = rows.findIndex((r) => r.some((c) => norm(c) === 'MODELO') && r.some((c) => norm(c) === 'INVENTARIO'));
+    if (hi < 0) continue;
+    const ix = (name) => rows[hi].findIndex((c) => norm(c) === name);
+    const [m, co, ac, sz, q] = ['MODELO', 'COLOR', 'ACABADO', 'TAMAÑO DE MUESTRA', 'INVENTARIO'].map(ix);
+    const list = rows.slice(hi + 1).filter((r) => String(r[m] || '').trim() && r[q] !== '' && !isNaN(Number(r[q])))
+      .map((r) => ({ model: String(r[m]).trim(), color: co >= 0 ? String(r[co] || '').trim() : '', finish: ac >= 0 ? String(r[ac] || '').trim() : '', sampleSize: sz >= 0 ? String(r[sz] || '').trim() : '', qty: Math.max(0, Math.round(Number(r[q]))) }));
+    if (!list.length) break;
+    return store.mutate((d) => inventory.applyInitialInventory(d, list, form.get('file').name), 'INVENTORY_INITIAL');
+  }
+  throw new AppError(400, 'INITIAL_NOT_FOUND', 'No sheet with the columns MODELO and INVENTARIO was found');
+}
+
 // ---------------------------------------------------------------- usuarios por área
 async function listUsers() {
   const [a, inv] = await Promise.all([fb.getDocs(store.colRef('admins')), fb.getDocs(store.colRef('invitaciones'))]);
@@ -319,6 +341,8 @@ on('GET', '/inventory/movements', (q) => ({
   movements: store.d.movements.filter((m) => !q.itemId || m.itemId === q.itemId).slice().sort((x, y) => String(x.at).localeCompare(String(y.at))).slice(-300).reverse()
     .map((m) => ({ ...m, area: m.area === 'BODEGA' ? 'Warehouse' : m.area, item: store.d.inventory[m.itemId] ? `${store.d.inventory[m.itemId].model} · ${store.d.inventory[m.itemId].color}` : [m.model, m.color].filter(Boolean).join(' · ') || m.itemId })),
 }));
+on('POST', '/inventory/initial', (q, b, p, form) => importInitialInventory(form), ces);
+on('POST', '/requests/:no/lines/:line/inventory-exclusion', (q, b, [no, line]) => store.mutate((d) => inventory.setLineExclusion(d, no, line, b.excluded), 'INVENTORY_LINE_EXCLUSION'), ces);
 on('POST', '/inventory/adjust', (q, b) => store.mutate((d) => inventory.adjustStock(d, b, store.area), 'INVENTORY_ADJUST'), ces);
 on('POST', '/requests/:no/inventory-exclusion', (q, b, [no]) => store.mutate((d) => { const r = inventory.setInventoryExclusion(d, no, b.excluded); inventory.reconcileInventory(d); return r; }, 'INVENTORY_EXCLUSION'), ces);
 for (const op of ['reserve', 'release', 'issue']) on('POST', `/inventory/${op}`, (q, b) => store.mutate((d) => inventory[op](d, b, store.area), `INVENTORY_${op.toUpperCase()}`));

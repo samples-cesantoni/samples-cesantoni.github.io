@@ -28,16 +28,15 @@ function candidates(d, line) {
 const lineKey = (model, color) => norm(`${model || ''} ${color || ''}`);
 function lineAllocation(d, requestNo) {
   const req = d.requests[requestNo];
-  const baseMoves = d.movements.filter((m) => m.source === 'BASE' && m.requestNo === requestNo);
-  const auto = activeAuto(d).filter((m) => m.requestNo === requestNo);
+  const act = activeDeductions(d).filter((m) => m.requestNo === requestNo);
   return req.lines.map((line) => {
-    const deductions = [...baseMoves.filter((m) => lineKey(m.model, m.color) === lineKey(line.model, line.color) || (norm(m.model) === norm(line.model) && !line.color)),
-      ...auto.filter((m) => m.line === line.line)];
+    const deductions = act.filter((m) => ofLine(m, line));
+    const excludedLine = (req.excludedLines || []).includes(line.line);
     const deductedQty = deductions.reduce((s, m) => s + (m.qty || 0), 0);
     const cands = candidates(d, line);
     const location = deductions[0]?.location || cands[0]?.location || '';
     const shortage = deductedQty < line.pieces && !cands.some((c) => c.available >= line.pieces - deductedQty);
-    return { ...line, deductions, deductedQty, reservations: [], reservedQty: deductedQty, candidates: cands.slice(0, 6), location, shortage };
+    return { ...line, deductions, deductedQty, excludedLine, reservations: [], reservedQty: deductedQty, candidates: cands.slice(0, 6), location, shortage: shortage && !excludedLine && !req.inventoryExcluded };
   });
 }
 
@@ -98,20 +97,36 @@ function issue(d, { reservationId, opKey }, area) {
 // settings.inventoryFrom (set once, the first time this runs): older requests were deducted by the Sample
 // Request base and are never deducted again. Cancelled or excluded requests give their pieces back.
 const AUTO_NOTE = 'Automatic deduction on request arrival';
+function returnedIds(d) { return new Set(d.movements.filter((m) => m.type === 'RETURN' && m.ref).map((m) => m.ref)); }
 function activeAuto(d) {
-  const returned = new Set(d.movements.filter((m) => m.type === 'RETURN' && m.source === 'AUTO').map((m) => m.ref));
+  const returned = returnedIds(d);
   return d.movements.filter((m) => m.source === 'AUTO' && m.type === 'ISSUE' && !returned.has(m.id));
 }
+// Deductions in force: the base's (before the switch) and the platform's, minus what was given back.
+function activeDeductions(d) {
+  const returned = returnedIds(d);
+  return d.movements.filter((m) => (m.source === 'AUTO' || m.source === 'BASE') && m.type === 'ISSUE' && !returned.has(m.id));
+}
+// AUTO movements carry the line; the base's are matched by model + color.
+const ofLine = (m, line) => (m.source === 'AUTO' ? m.line === line.line : lineKey(m.model, m.color) === lineKey(line.model, line.color) || (norm(m.model) === norm(line.model) && !line.color));
 const cutover = (d) => (d.settings && d.settings.inventoryFrom) || null;
 function startPlatformInventory(d) {
   if (!cutover(d)) d.settings = { ...(d.settings || {}), inventoryFrom: new Date().toISOString() };
   return cutover(d);
 }
 const parseLoc = (loc) => { const m = String(loc || '').match(/mueble\s*([A-Z0-9]+)\s*·?\s*pos\.?\s*([0-9.]+)/i); return m ? { cabinet: m[1].toUpperCase(), position: m[2] } : null; };
+// A cabinet + position holds one product, so the physical row is found by its location.
+const locKey = (cabinet, position) => `${String(cabinet).toUpperCase()}|${Number(position)}`;
+// Some positions appear twice in the base (two products at one cabinet/position): then the model decides.
+const sameProduct = (a, b) => { const x = norm(a), y = norm(b); return Boolean(x && y) && (x.startsWith(y) || y.startsWith(x)); };
+function physicalAt(d, location, model) {
+  const p = parseLoc(location);
+  if (!p || !Array.isArray(d.physicalInventory)) return null;
+  const rows = d.physicalInventory.filter((x) => locKey(x.cabinet, x.position) === locKey(p.cabinet, p.position));
+  return rows.length > 1 && model ? rows.find((x) => sameProduct(x.model, model)) || rows[0] : rows[0] || null;
+}
 function touchPhysical(d, item, delta) {
-  const p = parseLoc(item.location);
-  if (!p || !Array.isArray(d.physicalInventory)) return;
-  const row = d.physicalInventory.find((x) => String(x.cabinet).toUpperCase() === p.cabinet && String(x.position) === p.position && norm(x.model) === norm(item.model) && norm(x.color) === norm(item.color));
+  const row = physicalAt(d, item.location, item.model);
   if (row && typeof row.quantity === 'number') { d.physicalInventory = d.physicalInventory.map((x) => (x === row ? { ...x, quantity: Math.max(0, x.quantity + delta) } : x)); }
 }
 function pendingInventory(d) {
@@ -119,27 +134,45 @@ function pendingInventory(d) {
   const act = activeAuto(d);
   const out = { deduct: [], giveBack: [] };
   if (!c) return out;
+  const all = activeDeductions(d);
   for (const req of Object.values(d.requests)) {
+    if (req.status === 'CANCELLED' || req.inventoryExcluded) { if (all.some((m) => m.requestNo === req.requestNo)) out.giveBack.push(req.requestNo); continue; }
     if (!(String(req.createdAt || '') >= c)) continue;
     const mine = act.filter((m) => m.requestNo === req.requestNo);
-    if (req.status === 'CANCELLED' || req.inventoryExcluded) { if (mine.length) out.giveBack.push(req.requestNo); continue; }
     for (const line of req.lines || []) {
-      if (!(line.pieces > 0) || mine.some((m) => m.line === line.line)) continue;
+      if (!(line.pieces > 0) || (req.excludedLines || []).includes(line.line) || mine.some((m) => m.line === line.line)) continue;
       const cands = candidates(d, line).filter((i) => i.onHand > 0);
       if (cands.length) out.deduct.push({ requestNo: req.requestNo, line });
     }
   }
   return out;
 }
+function returnMove(d, m, why, at) {
+  const it = d.inventory[m.itemId];
+  const before = it ? it.onHand : null;
+  if (it) it.onHand += m.qty;
+  const row = physicalAt(d, m.location || (it && it.location), m.model);
+  if (row && typeof row.quantity === 'number') d.physicalInventory = d.physicalInventory.map((x) => (x === row ? { ...x, quantity: x.quantity + m.qty } : x));
+  d.movements.push({ id: `MOV-RET-${m.id.replace(/^MOV-/, '')}`, ref: m.id, at, type: 'RETURN', source: 'AUTO', itemId: m.itemId, qty: m.qty, requestNo: m.requestNo, line: m.line, area: 'SYSTEM',
+    model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, before, after: it ? it.onHand : null, note: why });
+}
 function giveBack(d, requestNo, why, at = new Date().toISOString()) {
-  for (const m of activeAuto(d).filter((x) => x.requestNo === requestNo)) {
-    const it = d.inventory[m.itemId];
-    const before = it ? it.onHand : null;
-    if (it) { it.onHand += m.qty; touchPhysical(d, it, m.qty); }
-    d.movements.push({ id: `MOV-RET-${m.id.replace(/^MOV-/, '')}`, ref: m.id, at, type: 'RETURN', source: 'AUTO', itemId: m.itemId, qty: m.qty, requestNo, line: m.line, area: 'SYSTEM',
-      model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, before, after: it ? it.onHand : null, note: why });
-  }
+  for (const m of activeDeductions(d).filter((x) => x.requestNo === requestNo)) returnMove(d, m, why, at);
   logEvent(d, { requestNo, event: `Inventory returned (${why})`, area: 'SYSTEM', at });
+}
+function deductLine(d, requestNo, line, at) {
+  const pick = candidates(d, line).filter((i) => i.onHand > 0).sort((a, b) => Number(b.preferred) - Number(a.preferred) || Number(b.onHand >= line.pieces) - Number(a.onHand >= line.pieces) || b.onHand - a.onHand)[0];
+  if (!pick) return false;
+  const it = d.inventory[pick.itemId];
+  const qty = Math.min(line.pieces, it.onHand);
+  const n = d.movements.filter((m) => m.source === 'AUTO' && m.type === 'ISSUE' && m.requestNo === requestNo && m.line === line.line).length + 1;
+  const before = it.onHand;
+  it.onHand -= qty;
+  touchPhysical(d, it, -qty);
+  d.movements.push({ id: `MOV-AUTO-${requestNo}-L${line.line}-${n}`, at, type: 'ISSUE', source: 'AUTO', itemId: it.itemId, qty, requestNo, line: line.line, area: 'SYSTEM',
+    model: it.model, color: it.color, sampleType: it.sampleType, location: it.location, before, after: it.onHand,
+    note: qty < line.pieces ? `${AUTO_NOTE} — only ${qty} of ${line.pieces} in stock` : AUTO_NOTE });
+  return true;
 }
 function reconcileInventory(d) {
   startPlatformInventory(d);
@@ -147,19 +180,7 @@ function reconcileInventory(d) {
   const at = new Date().toISOString();
   for (const no of back) giveBack(d, no, d.requests[no].inventoryExcluded ? 'Request excluded from inventory' : 'Request cancelled', at);
   const touched = new Set();
-  for (const { requestNo, line } of deduct) {
-    const pick = candidates(d, line).filter((i) => i.onHand > 0).sort((a, b) => Number(b.preferred) - Number(a.preferred) || Number(b.onHand >= line.pieces) - Number(a.onHand >= line.pieces) || b.onHand - a.onHand)[0];
-    const it = d.inventory[pick.itemId];
-    const qty = Math.min(line.pieces, it.onHand);
-    const n = d.movements.filter((m) => m.source === 'AUTO' && m.type === 'ISSUE' && m.requestNo === requestNo && m.line === line.line).length + 1;
-    const before = it.onHand;
-    it.onHand -= qty;
-    touchPhysical(d, it, -qty);
-    d.movements.push({ id: `MOV-AUTO-${requestNo}-L${line.line}-${n}`, at, type: 'ISSUE', source: 'AUTO', itemId: it.itemId, qty, requestNo, line: line.line, area: 'SYSTEM',
-      model: it.model, color: it.color, sampleType: it.sampleType, location: it.location, before, after: it.onHand,
-      note: qty < line.pieces ? `${AUTO_NOTE} — only ${qty} of ${line.pieces} in stock` : AUTO_NOTE });
-    touched.add(requestNo);
-  }
+  for (const { requestNo, line } of deduct) if (deductLine(d, requestNo, line, at)) touched.add(requestNo);
   for (const no of touched) logEvent(d, { requestNo: no, event: 'Inventory deducted automatically on request arrival', area: 'SYSTEM', at });
   return { deducted: deduct.length, returned: back.length };
 }
@@ -182,11 +203,69 @@ function adjustStock(d, { itemId, newQty, reason }, area) {
   return { item: it };
 }
 
+// CESANTONI: a whole request, or some of its lines, is not deducted (e.g. full pieces that were not sent).
+// Excluding gives the pieces back at once (also those the base deducted); including again deducts them.
 function setInventoryExclusion(d, requestNo, excluded) {
   const req = getRequest(d, requestNo);
+  const at = new Date().toISOString();
   req.inventoryExcluded = Boolean(excluded);
+  if (excluded) giveBack(d, requestNo, 'Request excluded from inventory', at);
+  else for (const line of req.lines || []) includeLine(d, req, line, at);
   logEvent(d, { requestNo, event: excluded ? 'Request excluded from inventory deduction' : 'Request included again in inventory deduction', area: 'CESANTONI' });
   return { request: req };
 }
+function includeLine(d, req, line, at) {
+  if ((req.excludedLines || []).includes(line.line) || !(line.pieces > 0)) return;
+  if (activeDeductions(d).some((m) => m.requestNo === req.requestNo && ofLine(m, line))) return;
+  deductLine(d, req.requestNo, line, at);
+}
+function setLineExclusion(d, requestNo, lineNo, excluded) {
+  const req = getRequest(d, requestNo);
+  const line = (req.lines || []).find((l) => l.line === Number(lineNo));
+  if (!line) throw new AppError(400, 'LINE_NOT_FOUND', 'Requested line not found');
+  const at = new Date().toISOString();
+  const set = new Set(req.excludedLines || []);
+  if (excluded) set.add(line.line); else set.delete(line.line);
+  req.excludedLines = [...set].sort((a, b) => a - b);
+  if (excluded) for (const m of activeDeductions(d).filter((x) => x.requestNo === requestNo && ofLine(x, line))) returnMove(d, m, `Line ${line.line} excluded from inventory`, at);
+  else if (!req.inventoryExcluded) includeLine(d, req, line, at);
+  logEvent(d, { requestNo, event: `Line ${line.line} ${excluded ? 'excluded from' : 'included again in'} inventory deduction`, area: 'CESANTONI', at });
+  return { request: req };
+}
 
-export { listItems, itemView, candidates, lineAllocation, reserve, release, issue, reservedFor, reconcileInventory, needsReconcile, adjustStock, setInventoryExclusion, activeAuto, touchPhysical, cutover as inventoryFrom };
+// CESANTONI: initial physical inventory (Excel «Inventario inicial»: MODELO, COLOR, ACABADO, TAMAÑO DE MUESTRA, INVENTARIO,
+// one row per cabinet/position in the same order as the physical inventory). Every position is left at
+// initial − deductions in force at that location; catalog items follow the quantity of their location.
+function applyInitialInventory(d, rows, name) {
+  startPlatformInventory(d);
+  const at = new Date().toISOString();
+  const phys = d.physicalInventory || [];
+  const used = new Set();
+  const same = (r, x) => norm(r.model) === norm(x.model) && norm(r.finish) === norm(x.finish) && norm(r.sampleSize).replace(/\s/g, '') === norm(x.sampleSize).replace(/\s/g, '');
+  const pairs = []; const unmatched = [];
+  rows.forEach((r, i) => {
+    let x = phys[i] && !used.has(i) && norm(phys[i].model) === norm(r.model) ? i : -1;
+    if (x < 0) x = phys.findIndex((p, j) => !used.has(j) && same(r, p) && (!r.color || norm(p.color) === norm(r.color)));
+    if (x < 0) { unmatched.push(`${r.model} ${r.color || ''} ${r.sampleSize || ''}`.trim()); return; }
+    used.add(x); pairs.push([r, x]);
+  });
+  const ded = new Map();
+  for (const m of activeDeductions(d)) { const row = physicalAt(d, m.location, m.model); if (row) ded.set(row, (ded.get(row) || 0) + (m.qty || 0)); }
+  d.physicalInventory = phys.map((p, j) => {
+    const pr = pairs.find(([, x]) => x === j);
+    if (!pr) return p;
+    return { ...p, initialQuantity: pr[0].qty, quantity: Math.max(0, pr[0].qty - (ded.get(p) || 0)) };
+  });
+  let itemsChanged = 0;
+  for (const it of Object.values(d.inventory)) {
+    const row = physicalAt(d, it.location, it.model);
+    const q = row && row.initialQuantity !== undefined ? row.quantity : undefined;
+    if (q === undefined || q === it.onHand) continue;
+    d.movements.push({ id: rid('MOV'), at, type: q > it.onHand ? 'RECEIPT' : 'ADJUST', source: 'INITIAL', itemId: it.itemId, qty: Math.abs(q - it.onHand), requestNo: null, area: 'CESANTONI',
+      model: it.model, color: it.color, sampleType: it.sampleType, location: it.location, before: it.onHand, after: q, note: `Initial inventory (${name}) minus requests deducted` });
+    it.onHand = q; itemsChanged += 1;
+  }
+  return { rows: rows.length, matched: pairs.length, unmatched, itemsChanged };
+}
+
+export { listItems, itemView, candidates, lineAllocation, reserve, release, issue, reservedFor, reconcileInventory, needsReconcile, adjustStock, setInventoryExclusion, setLineExclusion, applyInitialInventory, activeAuto, activeDeductions, touchPhysical, cutover as inventoryFrom };
