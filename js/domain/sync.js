@@ -5,6 +5,7 @@
 import { logEvent } from './common.js';
 import { STATUSES } from './catalog.js';
 import { norm } from './sheet-parse.js';
+import { touchPhysical } from './inventory.js';
 import { localParts } from './time.js';
 
 const TZ = 'America/Mexico_City';
@@ -73,14 +74,29 @@ function applySourceSnapshot(d, { requests = [], tracking = [], operation = [], 
   }
 
   // Inventory. Before the switch (settings.inventoryFrom) the base was the authority and was mirrored.
-  // Since the switch the platform keeps the stock: the base only adds new catalog items and the
-  // deductions it made for requests older than the switch. Items are never deleted.
+  // Since the switch the platform keeps the stock and deducts the requests itself; from the base it takes
+  // new catalog items and the MANUAL changes made there (stock received, counts, breakage): the change of
+  // the base quantity that is not explained by the base's own request deductions. Items are never deleted.
   const from = d.settings && d.settings.inventoryFrom;
   const createdNow = new Set();
+  const knownMoves = new Set(d.movements.map((m) => m.id));
+  const explained = {};
+  for (const m of moves) if (!knownMoves.has(m.id)) { const it = matchItem(d, m); if (it) explained[it.itemId] = (explained[it.itemId] || 0) + (m.qty || 0); }
+  summary.stockChanges = 0;
   for (const it of catalog.items) {
     const ex = d.inventory[it.itemId];
     if (!ex) { d.inventory[it.itemId] = { ...it, sourceOnHand: it.onHand, reserved: 0, inSource: true, importedAt: at }; createdNow.add(it.itemId); summary.itemsCreated += 1; continue; }
-    const next = { ...ex, ...it, onHand: from ? ex.onHand : it.onHand, sourceOnHand: it.onHand, inSource: true };
+    let onHand = from ? ex.onHand : it.onHand;
+    const manual = from && typeof ex.sourceOnHand === 'number' ? it.onHand - ex.sourceOnHand + (explained[it.itemId] || 0) : 0;
+    if (manual) {
+      const before = onHand;
+      onHand = Math.max(0, onHand + manual);
+      touchPhysical(d, ex, onHand - before);
+      d.movements.push({ id: `MOV-SHT-${it.itemId}-${Date.now().toString(36)}`, at, type: manual > 0 ? 'RECEIPT' : 'ADJUST', source: 'SHEETS', itemId: it.itemId, qty: Math.abs(onHand - before), requestNo: null, area: 'SYSTEM',
+        model: it.model, color: it.color, sampleType: it.sampleType, location: it.location, before, after: onHand, note: `Changed in the Sample Request base (${ex.sourceOnHand} → ${it.onHand})` });
+      summary.stockChanges += 1;
+    }
+    const next = { ...ex, ...it, onHand, sourceOnHand: it.onHand, inSource: true };
     if (JSON.stringify(next) !== JSON.stringify(ex)) { Object.assign(ex, next); summary.itemsUpdated += 1; }
   }
   const seen = new Set(catalog.items.map((i) => i.itemId));
@@ -92,8 +108,11 @@ function applySourceSnapshot(d, { requests = [], tracking = [], operation = [], 
   for (const m of moves) {
     if (known.has(m.id)) continue;
     const req = d.requests[m.requestNo];
-    if (from && req && String(req.createdAt || '') >= from) continue; // deducted by the platform itself
     const item = matchItem(d, m);
+    if (from && req && String(req.createdAt || '') >= from) { // the platform deducts this request itself: kept only as a record
+      d.movements.push({ id: m.id, at: m.at || at, type: 'ISSUE', itemId: item ? item.itemId : null, qty: m.qty, requestNo: m.requestNo, area: 'SYSTEM', source: 'BASE_IGNORED', model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, note: 'Deducted in the base — not applied (the platform deducts on arrival)' });
+      continue;
+    }
     let { before, after } = m;
     if (from && item && !createdNow.has(item.itemId)) { before = item.onHand; item.onHand = Math.max(0, item.onHand - (m.qty || 0)); after = item.onHand; } // not mirrored anymore
     d.movements.push({ id: m.id, at: m.at || at, type: 'ISSUE', itemId: item ? item.itemId : null, qty: m.qty, requestNo: m.requestNo, area: 'SYSTEM', source: 'BASE', model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, before, after, note: m.note || 'Deducted by the Sample Request base' });

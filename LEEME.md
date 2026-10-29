@@ -54,6 +54,9 @@ El registro técnico de quién hizo qué se guarda en `sc_seguridad`, que solo l
   según lo pedido) y de su mueble/posición en el inventario físico. Queda como movimiento «Descuento al llegar» en el folio y en *Inventario*.
 - Si el folio se **cancela** o CESANTONI marca «No descontar inventario de este folio», las piezas **regresan** solas.
 - Los folios anteriores ya los había descontado la base y no se descuentan otra vez.
+- **Cambios manuales en Sheets** (llegaron muestras, conteo, piezas rotas): si cambias la existencia en *PRODUCTS* de la base, la plataforma aplica
+  esa diferencia en la siguiente sincronización (movimiento «Cambio en Sheets»). Lo que la base descuenta por sus folios no se aplica otra vez
+  (queda como «Descuento de la base (no aplicado)»), porque la plataforma ya lo descontó al llegar.
 - **Entradas y conteos:** en *Inventario*, CESANTONI usa **Ajustar** en el artículo, escribe la nueva existencia y el motivo; queda registrado.
 - Lo hace la sesión de CESANTONI al abrir la plataforma o el Apps Script (`sincronizar`, cada 15 min), lo que ocurra primero; mismos ids, nunca dos veces.
 

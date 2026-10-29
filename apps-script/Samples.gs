@@ -283,14 +283,28 @@ function sincronizar() {
     // Inventario: la base manda (descuenta por folio). Nunca se borra un artículo.
     var hc = sha1(JSON.stringify(cat));
     // Desde ajustes.inventoryFrom la plataforma lleva las existencias: de la base solo se toman artículos nuevos.
+    // Los cambios MANUALES hechos en la base (entradas, conteos, mermas) sí se aplican: la diferencia de la existencia
+    // de la base que no se explica por sus propios descuentos de folios.
     var aj0 = fsGet('sc_config', 'ajustes'), desde = aj0 && aj0.inventoryFrom, nuevos = {};
     if (meta.catalogo !== hc) {
-      var actuales = {}; fsList('sc_inventario').forEach(function (x) { actuales[x.__id] = x; });
+      var actuales = {}, invL = fsList('sc_inventario'); invL.forEach(function (x) { actuales[x.__id] = x; });
+      var conocidos = {}; fsList('sc_movimientos').forEach(function (x) { conocidos[x.__id] = true; });
+      var explicado = {}; movimientos.forEach(function (m) { if (conocidos[m.id]) return; var a = articuloDe(invL, m); if (a) explicado[a.__id] = (explicado[a.__id] || 0) + (m.qty || 0); });
       cat.items.forEach(function (it) {
         var ex = actuales[it.itemId];
         if (!ex) { it.sourceOnHand = it.onHand; it.reserved = 0; it.inSource = true; it.importedAt = ahora; if (fsCreate('sc_inventario', it.itemId, it)) { res.articulos++; nuevos[it.itemId] = true; } return; }
-        var cambio = ['sku', 'model', 'color', 'format', 'sampleType', 'formLabel', desde ? null : 'onHand', 'location', 'backupLocation', 'display'].filter(Boolean).some(function (k) { return JSON.stringify(ex[k]) !== JSON.stringify(it[k]); }) || ex.inSource !== true;
-        if (cambio) { var nx = JSON.parse(JSON.stringify(ex)); Object.keys(it).forEach(function (k) { nx[k] = it[k]; }); if (desde) nx.onHand = ex.onHand; nx.sourceOnHand = it.onHand; nx.inSource = true; fsReplace('sc_inventario', it.itemId, nx, ex); res.existencias++; }
+        var manual = desde && typeof ex.sourceOnHand === 'number' ? it.onHand - ex.sourceOnHand + (explicado[it.itemId] || 0) : 0;
+        var cambio = manual || ['sku', 'model', 'color', 'format', 'sampleType', 'formLabel', desde ? 'sourceOnHand' : 'onHand', 'location', 'backupLocation', 'display'].some(function (k) { return JSON.stringify(ex[k]) !== JSON.stringify(k === 'sourceOnHand' ? it.onHand : it[k]); }) || ex.inSource !== true;
+        if (cambio) {
+          var nx = JSON.parse(JSON.stringify(ex)); Object.keys(it).forEach(function (k) { nx[k] = it[k]; });
+          if (desde) nx.onHand = Math.max(0, ex.onHand + manual);
+          nx.sourceOnHand = it.onHand; nx.inSource = true; fsReplace('sc_inventario', it.itemId, nx, ex); res.existencias++;
+          if (manual) {
+            var mid = rid('MOV-SHT'), delta = nx.onHand - ex.onHand;
+            fsCreate('sc_movimientos', mid, { id: mid, at: ahora, type: delta > 0 ? 'RECEIPT' : 'ADJUST', source: 'SHEETS', itemId: it.itemId, qty: Math.abs(delta), requestNo: null, area: 'SYSTEM', model: it.model, color: it.color, sampleType: it.sampleType, location: it.location, before: ex.onHand, after: nx.onHand, note: 'Changed in the Sample Request base (' + ex.sourceOnHand + ' → ' + it.onHand + ')' });
+            moverFisico(ex, delta); res.cambiosSheets = (res.cambiosSheets || 0) + 1;
+          }
+        }
       });
       var fis = fsGet('sc_config', 'fisico');
       if (cat.fisico.length && (!desde || !fis || !(fis.rows || []).length)) fsReplace('sc_config', 'fisico', { rows: cat.fisico }, fis);
@@ -302,9 +316,11 @@ function sincronizar() {
       var inv = fsList('sc_inventario'), creadas = {};
       fsList('sc_solicitudes').forEach(function (q) { creadas[q.__id] = q.createdAt || ''; });
       movimientos.forEach(function (m) {
-        if (desde && creadas[m.requestNo] !== undefined && String(creadas[m.requestNo]) >= desde) return; // lo descuenta la plataforma
-        var c = inv.filter(function (i) { return norm(i.model) === norm(m.model) && norm(i.color) === norm(m.color); });
-        var it = c.filter(function (i) { return norm(i.location) === norm(m.location) && norm(i.sampleType) === norm(m.sampleType); })[0] || c.filter(function (i) { return norm(i.location) === norm(m.location); })[0] || c[0];
+        var it = articuloDe(inv, m);
+        if (desde && creadas[m.requestNo] !== undefined && String(creadas[m.requestNo]) >= desde) { // lo descuenta la plataforma: solo queda como registro
+          fsCreate('sc_movimientos', m.id, { id: m.id, at: m.at || ahora, type: 'ISSUE', itemId: it ? it.__id : null, qty: m.qty, requestNo: m.requestNo, area: 'SYSTEM', source: 'BASE_IGNORED', model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, note: 'Deducted in the base — not applied (the platform deducts on arrival)' });
+          return;
+        }
         var antes = m.before, despues = m.after, fresco = desde && it && !nuevos[it.__id] ? fsGet('sc_inventario', it.__id) : null;
         if (fresco) { antes = fresco.onHand; despues = Math.max(0, fresco.onHand - (m.qty || 0)); }
         if (fsCreate('sc_movimientos', m.id, { id: m.id, at: m.at || ahora, type: 'ISSUE', itemId: it ? it.__id : null, qty: m.qty, requestNo: m.requestNo, area: 'SYSTEM', source: 'BASE', model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, before: antes, after: despues, note: m.note || 'Deducted by the Sample Request base' })) {
@@ -323,6 +339,10 @@ function sincronizar() {
 }
 
 /* ------------------------------------------------------------------ inventario de la plataforma */
+function articuloDe(inv, m) {
+  var c = inv.filter(function (i) { return norm(i.model) === norm(m.model) && norm(i.color) === norm(m.color); });
+  return c.filter(function (i) { return norm(i.location) === norm(m.location) && norm(i.sampleType) === norm(m.sampleType); })[0] || c.filter(function (i) { return norm(i.location) === norm(m.location); })[0] || c[0] || null;
+}
 // Igual que js/domain/inventory.js (reconcileInventory): cada folio creado desde ajustes.inventoryFrom se descuenta al
 // llegar, línea por línea, del artículo del mismo modelo y color (prefiriendo corte o pieza completa). Si el folio se
 // cancela o se excluye, las piezas regresan. Mismos ids que la plataforma: nunca se descuenta dos veces.

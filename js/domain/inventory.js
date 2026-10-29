@@ -189,4 +189,4 @@ function setInventoryExclusion(d, requestNo, excluded) {
   return { request: req };
 }
 
-export { listItems, itemView, candidates, lineAllocation, reserve, release, issue, reservedFor, reconcileInventory, needsReconcile, adjustStock, setInventoryExclusion, activeAuto, cutover as inventoryFrom };
+export { listItems, itemView, candidates, lineAllocation, reserve, release, issue, reservedFor, reconcileInventory, needsReconcile, adjustStock, setInventoryExclusion, activeAuto, touchPhysical, cutover as inventoryFrom };
