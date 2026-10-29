@@ -47,6 +47,13 @@ Igual que proveedores y movimientos:
 En pantallas, PDF, Excel, etiquetas y correos solo aparece el área (CESANTONI / Warehouse / System), nunca el nombre de una persona.
 El registro técnico de quién hizo qué se guarda en `sc_seguridad`, que solo leen los administradores desde la consola.
 
+## Inventario oficial en la base (estructura Houston)
+
+Si la hoja *PRODUCTS* de la base trae el bloque **INVENTARIO OFICIAL** (inventario por REFERENCIA «HOUSTON2-001», con FILA EXCEL, ACABADO,
+TAMAÑO DE MUESTRA, MUESTRA / CUT y STANDARD) y *MOVIMIENTOS INVENTARIO* con la columna REFERENCIA, la **base vuelve a llevar el inventario**:
+la plataforma copia existencias y descuentos en cada sincronización y no descuenta por su cuenta (no hay doble descuento).
+Para cambiar una cantidad o excluir un folio/línea se hace en la base. Si la hoja PRODUCTS no se puede leer, las solicitudes se sincronizan igual.
+
 ## Inventario (lo lleva la plataforma)
 
 - Desde el primer uso de esta versión (`inventoryFrom` en *sc_config/ajustes*) la plataforma lleva las existencias; la base de Sheets ya no las sobrescribe.

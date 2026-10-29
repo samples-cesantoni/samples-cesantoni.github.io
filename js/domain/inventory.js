@@ -12,7 +12,9 @@ function itemView(d, it) {
   const state = available <= 0 ? 'OUT_OF_STOCK' : available < 5 ? 'LOW' : 'AVAILABLE';
   return { ...it, reserved, available, state };
 }
-function listItems(d) { return Object.values(d.inventory).map((it) => itemView(d, it)); }
+const sheetsMode = (d) => (d.settings || {}).inventorySource === 'SHEETS';
+// When the base keeps the inventory, products no longer in it are left out.
+function listItems(d) { return Object.values(d.inventory).filter((it) => !(sheetsMode(d) && it.inSource === false)).map((it) => itemView(d, it)); }
 
 // Catalog items that can fulfil a requested line (model + color, preferring the sample type).
 function candidates(d, line) {
@@ -29,14 +31,15 @@ const lineKey = (model, color) => norm(`${model || ''} ${color || ''}`);
 function lineAllocation(d, requestNo) {
   const req = d.requests[requestNo];
   const act = activeDeductions(d).filter((m) => m.requestNo === requestNo);
+  const base = baseByLine(req, act.filter((m) => m.source === 'BASE'));
   return req.lines.map((line) => {
-    const deductions = act.filter((m) => ofLine(m, line));
+    const deductions = [...(base.get(line.line) || []), ...act.filter((m) => m.source === 'AUTO' && m.line === line.line)];
     const excludedLine = (req.excludedLines || []).includes(line.line);
     const deductedQty = deductions.reduce((s, m) => s + (m.qty || 0), 0);
     const cands = candidates(d, line);
     const location = deductions[0]?.location || cands[0]?.location || '';
     const shortage = deductedQty < line.pieces && !cands.some((c) => c.available >= line.pieces - deductedQty);
-    return { ...line, deductions, deductedQty, excludedLine, reservations: [], reservedQty: deductedQty, candidates: cands.slice(0, 6), location, shortage: shortage && !excludedLine && !req.inventoryExcluded };
+    return { ...line, deductions, deductedQty, excludedLine, reservations: [], reservedQty: deductedQty, candidates: cands.slice(0, 6), location, shortage: shortage && !excludedLine && !req.inventoryExcluded && !sheetsMode(d) }; // with the base in charge, what it did not deduct is its decision
   });
 }
 
@@ -104,11 +107,33 @@ function activeAuto(d) {
 }
 // Deductions in force: the base's (before the switch) and the platform's, minus what was given back.
 function activeDeductions(d) {
+  if (sheetsMode(d)) { const ids = new Set((d.meta || {}).baseMoves || []); return d.movements.filter((m) => m.source === 'BASE' && ids.has(m.id)); }
   const returned = returnedIds(d);
   return d.movements.filter((m) => (m.source === 'AUTO' || m.source === 'BASE') && m.type === 'ISSUE' && !returned.has(m.id));
 }
 // AUTO movements carry the line; the base's are matched by model + color.
-const ofLine = (m, line) => (m.source === 'AUTO' ? m.line === line.line : lineKey(m.model, m.color) === lineKey(line.model, line.color) || (norm(m.model) === norm(line.model) && !line.color));
+// The base names products in different ways ("AREZZO" for "AREZZO GRIP · SAND", "KIEL PAVER" for "KIEL GRIP PAVER"):
+// every word of the deduction must be in the line, and cut / full piece / mesh must agree.
+const tokens = (x) => norm(x).split(/[^A-Z0-9ÁÉÍÓÚÑ]+/).filter((t) => t && !/^\d+(\.\d+)?$/.test(t));
+const kindOf = (x) => { const v = norm(x); return /MESH|MALLA/.test(v) ? 'MESH' : /STANDARD|FULL|COMPLETA/.test(v) ? 'FULL' : /CUT|SAMPLE|CORTE|8×8|8X8|20×20|20X20/.test(v) ? 'CUT' : ''; };
+function baseMatches(m, line) {
+  const lt = new Set([...tokens(line.model), ...tokens(line.color)]);
+  const mt = [...tokens(m.model), ...tokens(m.color)];
+  if (!mt.length || !mt.every((t) => lt.has(t))) return false;
+  const a = kindOf(m.sampleType), b = kindOf(line.pieceSize);
+  return !a || !b || a === b;
+}
+const ofLine = (m, line) => (m.source === 'AUTO' ? m.line === line.line : baseMatches(m, line));
+// Each base deduction belongs to one line (two equal lines take one each).
+function baseByLine(req, moves) {
+  const out = new Map(); const used = new Set();
+  for (const line of req.lines || []) {
+    let got = 0; const mine = [];
+    for (const m of moves) { if (used.has(m.id) || got >= line.pieces || !baseMatches(m, line)) continue; used.add(m.id); got += m.qty || 0; mine.push(m); }
+    out.set(line.line, mine);
+  }
+  return out;
+}
 const cutover = (d) => (d.settings && d.settings.inventoryFrom) || null;
 function startPlatformInventory(d) {
   if (!cutover(d)) d.settings = { ...(d.settings || {}), inventoryFrom: new Date().toISOString() };
@@ -120,8 +145,11 @@ const locKey = (cabinet, position) => `${String(cabinet).toUpperCase()}|${Number
 // Some positions appear twice in the base (two products at one cabinet/position): then the model decides.
 const sameProduct = (a, b) => { const x = norm(a), y = norm(b); return Boolean(x && y) && (x.startsWith(y) || y.startsWith(x)); };
 function physicalAt(d, location, model) {
+  if (!Array.isArray(d.physicalInventory)) return null;
+  const ref = norm(location);
+  if (ref && !parseLoc(location)) return d.physicalInventory.find((x) => x.reference && norm(x.reference) === ref) || null; // official layout: HOUSTON2-001
   const p = parseLoc(location);
-  if (!p || !Array.isArray(d.physicalInventory)) return null;
+  if (!p) return null;
   const rows = d.physicalInventory.filter((x) => locKey(x.cabinet, x.position) === locKey(p.cabinet, p.position));
   return rows.length > 1 && model ? rows.find((x) => sameProduct(x.model, model)) || rows[0] : rows[0] || null;
 }
@@ -130,6 +158,7 @@ function touchPhysical(d, item, delta) {
   if (row && typeof row.quantity === 'number') { d.physicalInventory = d.physicalInventory.map((x) => (x === row ? { ...x, quantity: Math.max(0, x.quantity + delta) } : x)); }
 }
 function pendingInventory(d) {
+  if (sheetsMode(d)) return { deduct: [], giveBack: [] };
   const c = cutover(d);
   const act = activeAuto(d);
   const out = { deduct: [], giveBack: [] };
@@ -184,10 +213,11 @@ function reconcileInventory(d) {
   for (const no of touched) logEvent(d, { requestNo: no, event: 'Inventory deducted automatically on request arrival', area: 'SYSTEM', at });
   return { deducted: deduct.length, returned: back.length };
 }
-const needsReconcile = (d) => { if (!cutover(d)) return true; const p = pendingInventory(d); return p.deduct.length + p.giveBack.length > 0; };
+const needsReconcile = (d) => { if (sheetsMode(d)) return false; if (!cutover(d)) return true; const p = pendingInventory(d); return p.deduct.length + p.giveBack.length > 0; };
 
 // CESANTONI: stock received or counted. Records the difference as a movement (never deletes history).
 function adjustStock(d, { itemId, newQty, reason }, area) {
+  if (sheetsMode(d)) throw new AppError(409, 'INVENTORY_IN_SHEETS', 'El inventario lo lleva la base de Sheets (INVENTARIO OFICIAL): haz el cambio en la base y se refleja en la siguiente sincronización.');
   const it = d.inventory[itemId];
   if (!it) throw new AppError(404, 'ITEM_NOT_FOUND', 'Inventory item not found');
   const q = Number(newQty);
@@ -205,6 +235,7 @@ function adjustStock(d, { itemId, newQty, reason }, area) {
 
 // CESANTONI: physical count of one cabinet/position. The catalog items stored there follow it.
 function adjustPhysical(d, { cabinet, position, model, newQty, reason }, area) {
+  if (sheetsMode(d)) throw new AppError(409, 'INVENTORY_IN_SHEETS', 'El inventario lo lleva la base de Sheets (INVENTARIO OFICIAL): haz el cambio en la base y se refleja en la siguiente sincronización.');
   const q = Number(newQty);
   if (!Number.isInteger(q) || q < 0) throw new AppError(400, 'INVALID_QTY', 'Quantity must be a whole number, zero or more');
   if (String(reason || '').trim().length < 3) throw new AppError(400, 'REASON_REQUIRED', 'Write the reason (e.g. samples received, physical count)');
@@ -225,6 +256,7 @@ function adjustPhysical(d, { cabinet, position, model, newQty, reason }, area) {
 // CESANTONI: a whole request, or some of its lines, is not deducted (e.g. full pieces that were not sent).
 // Excluding gives the pieces back at once (also those the base deducted); including again deducts them.
 function setInventoryExclusion(d, requestNo, excluded) {
+  if (sheetsMode(d)) throw new AppError(409, 'INVENTORY_IN_SHEETS', 'El inventario lo lleva la base de Sheets (INVENTARIO OFICIAL): haz el cambio en la base y se refleja en la siguiente sincronización.');
   const req = getRequest(d, requestNo);
   const at = new Date().toISOString();
   req.inventoryExcluded = Boolean(excluded);
@@ -239,6 +271,7 @@ function includeLine(d, req, line, at) {
   deductLine(d, req.requestNo, line, at);
 }
 function setLineExclusion(d, requestNo, lineNo, excluded) {
+  if (sheetsMode(d)) throw new AppError(409, 'INVENTORY_IN_SHEETS', 'El inventario lo lleva la base de Sheets (INVENTARIO OFICIAL): haz el cambio en la base y se refleja en la siguiente sincronización.');
   const req = getRequest(d, requestNo);
   const line = (req.lines || []).find((l) => l.line === Number(lineNo));
   if (!line) throw new AppError(400, 'LINE_NOT_FOUND', 'Requested line not found');
@@ -256,6 +289,7 @@ function setLineExclusion(d, requestNo, lineNo, excluded) {
 // one row per cabinet/position in the same order as the physical inventory). Every position is left at
 // initial − deductions in force at that location; catalog items follow the quantity of their location.
 function applyInitialInventory(d, rows, name) {
+  if (sheetsMode(d)) throw new AppError(409, 'INVENTORY_IN_SHEETS', 'El inventario lo lleva la base de Sheets (INVENTARIO OFICIAL): haz el cambio en la base y se refleja en la siguiente sincronización.');
   startPlatformInventory(d);
   const at = new Date().toISOString();
   const phys = d.physicalInventory || [];
@@ -289,4 +323,4 @@ function applyInitialInventory(d, rows, name) {
   return { rows: rows.length, matched: pairs.length, unmatched, itemsChanged };
 }
 
-export { listItems, itemView, candidates, lineAllocation, reserve, release, issue, reservedFor, reconcileInventory, needsReconcile, adjustStock, setInventoryExclusion, setLineExclusion, applyInitialInventory, adjustPhysical, physicalAt, activeAuto, activeDeductions, touchPhysical, cutover as inventoryFrom };
+export { listItems, itemView, candidates, lineAllocation, reserve, release, issue, reservedFor, reconcileInventory, needsReconcile, adjustStock, setInventoryExclusion, setLineExclusion, applyInitialInventory, adjustPhysical, physicalAt, sheetsMode, activeAuto, activeDeductions, touchPhysical, cutover as inventoryFrom };

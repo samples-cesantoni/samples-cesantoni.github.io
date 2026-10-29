@@ -15,7 +15,8 @@ const ALIASES = {
   'REQUEST ID': ['ID SOLICITUD'], 'PREPARATION DATE': ['FECHA PREPARACIÓN'], 'SHIP DATE': ['FECHA ENVÍO'], 'DELIVERY DATE': ['FECHA ENTREGA'],
   'TRACKING NO.': ['NÚM. GUÍA / TRACKING'], CARRIER: ['PAQUETERÍA'], DISPLAY: ['MOSTRAR'], 'SKU (OMITTED)': ['SKU (OMITIDO)'],
   'SOURCE FORMAT': ['FORMATO ORIGEN'], 'SAMPLE TYPE': ['TIPO DE MUESTRA'], INVENTORY: ['INVENTARIO'], REFERENCE: ['REFERENCIA'],
-  'FORM LABEL': ['ETIQUETA WEB (INGLÉS)'], '20×20 CUT': ['CORTE 20×20'], STANDARD: ['PIEZA COMPLETA'], 'BACKUP MUEBLE / POSICIÓN': ['RESPALDO MUEBLE / POSICIÓN'],
+  'FORM LABEL': ['ETIQUETA WEB (INGLÉS)', 'ETIQUETA WEB'], '20×20 CUT': ['CORTE 20×20', 'MUESTRA / CUT'], STANDARD: ['PIEZA COMPLETA'], 'BACKUP MUEBLE / POSICIÓN': ['RESPALDO MUEBLE / POSICIÓN', 'RESPALDO'],
+  'MUEBLE / POSICIÓN': ['UBICACIÓN'],
 };
 const names = (h) => [h, ...(ALIASES[h] || [])].map(norm);
 
@@ -77,7 +78,7 @@ function parseRequests(rows, timeZone) {
     }
     r.lines.push({
       line: num(g(row, 'LINE')) ?? r.lines.length + 1,
-      model: str(g(row, 'MODEL')), color: str(g(row, 'COLOR')), pieceSize: str(g(row, 'PIECE SIZE')),
+      model: str(g(row, 'MODEL')), color: /^\d+(\.\d+)?$/.test(str(g(row, 'COLOR'))) ? '' : str(g(row, 'COLOR')), pieceSize: str(g(row, 'PIECE SIZE')), // a stray number in COLOR is not a color
       pieces: num(g(row, 'NUMBER OF PIECES')) ?? 0, sku: str(g(row, 'SKU')),
     });
   }
@@ -110,13 +111,13 @@ function parseOperation(rows) {
 
 // "MOVIMIENTOS INVENTARIO": stock deductions the base applies per request (the platform never deducts again).
 function parseInventoryMoves(rows, timeZone) {
-  const h = findHeader(rows, ['FECHA', 'FOLIO', 'MODELO', 'CANTIDAD']);
+  const h = findHeader(rows, ['FOLIO', 'MODELO', 'CANTIDAD']);
   if (!h) return [];
   const g = (row, k) => (h.idx[k] === undefined ? '' : row[h.idx[k]]);
   return rows.slice(h.headerRow + 1).filter((r) => /^[A-Z]+-\d+$/.test(str(g(r, 'FOLIO'))) && str(g(r, 'MODELO')) && num(g(r, 'CANTIDAD')) > 0).map((row) => {
     const m = {
       at: toInstant(g(row, 'FECHA'), timeZone), requestNo: str(g(row, 'FOLIO')), model: str(g(row, 'MODELO')), color: str(g(row, 'COLOR')),
-      sampleType: str(g(row, 'TIPO DESCONTADO')), qty: num(g(row, 'CANTIDAD')) ?? 0, location: str(g(row, 'UBICACIÓN')),
+      sampleType: str(g(row, 'TIPO DESCONTADO')) || str(g(row, 'TIPO')), qty: num(g(row, 'CANTIDAD')) ?? 0, location: str(g(row, 'UBICACIÓN')) || str(g(row, 'REFERENCIA')),
       before: num(g(row, 'INVENTARIO ANTERIOR')), after: num(g(row, 'INVENTARIO NUEVO')), note: str(g(row, 'NOTA')),
     };
     m.id = 'MOV-SRC-' + sha1([m.requestNo, m.model, m.color, m.sampleType, m.qty, m.location, m.before, m.after].map(norm).join('|')).slice(0, 16);
@@ -128,42 +129,53 @@ function itemId(parts) {
   return 'ITM-' + sha1(parts.map(norm).join('|')).slice(0, 12);
 }
 
-// "PRODUCTS" sheet: A:M operational catalog + O:Y ARMEX/CESANTONI starting inventory.
+// "PRODUCTS" sheet: A:M catalog of the web form + the warehouse inventory block on the right.
+// Two layouts are accepted: the original one (FORMATO ORIGEN, MUEBLE / POSICIÓN, physical MUEBLE + POSICIÓN) and the
+// official Houston one (TAMAÑO DE MUESTRA, REFERENCIA FUENTE, physical block keyed by REFERENCIA «HOUSTON2-001»).
 function parseCatalog(rows) {
-  const h = findHeader(rows, ['DISPLAY', 'MODEL', 'COLOR', 'SOURCE FORMAT', 'SAMPLE TYPE', 'INVENTORY', 'MUEBLE / POSICIÓN']);
+  const h = findHeader(rows, ['MODEL', 'COLOR', 'SAMPLE TYPE', 'INVENTORY']);
   if (!h) throw new Error('PRODUCTS sheet: catalog headers not found (structure changed?)');
   const items = [];
   const seen = new Map();
+  const end = Math.max(...['MODEL', 'COLOR', 'SAMPLE TYPE', 'INVENTORY', 'MUEBLE / POSICIÓN', 'BACKUP MUEBLE / POSICIÓN', 'REFERENCIA FUENTE', 'STANDARD'].map((k) => h.idx[k] ?? -1));
+  const fmtCol = h.idx['SOURCE FORMAT'] ?? (h.idx['TAMAÑO DE MUESTRA'] !== undefined && h.idx['TAMAÑO DE MUESTRA'] < end ? h.idx['TAMAÑO DE MUESTRA'] : undefined);
   for (const row of rows.slice(h.headerRow + 1)) {
-    const g = (k) => (h.idx[k] === undefined ? '' : row[h.idx[k]]);
+    const g = (k) => (h.idx[k] === undefined || h.idx[k] > end ? '' : row[h.idx[k]]);
     const model = str(g('MODEL'));
     if (!model) continue;
-    const base = [model, str(g('COLOR')), str(g('SOURCE FORMAT')), str(g('SAMPLE TYPE'))];
+    const color = /^\d+(\.\d+)?$/.test(str(g('COLOR'))) ? '' : str(g('COLOR'));
+    const format = fmtCol === undefined ? '' : str(row[fmtCol]);
+    const reference = str(g('REFERENCIA FUENTE'));
+    const base = [model, color, format, str(g('SAMPLE TYPE'))];
     const n = (seen.get(base.join('|')) || 0) + 1; seen.set(base.join('|'), n);
     items.push({
-      itemId: itemId([...base, n > 1 ? n : '']),
-      sku: str(g('SKU (OMITTED)')) || str(g('SKU')),
-      model, color: str(g('COLOR')), format: str(g('SOURCE FORMAT')), sampleType: str(g('SAMPLE TYPE')),
+      itemId: reference ? `ITM-${reference}` : itemId([model, str(g('COLOR')), format, str(g('SAMPLE TYPE')), n > 1 ? n : '']),
+      sku: str(g('SKU (OMITTED)')) || str(g('SKU')), reference,
+      model, color, format, sampleType: str(g('SAMPLE TYPE')),
       formLabel: str(g('FORM LABEL')), onHand: num(g('INVENTORY')) ?? 0,
-      location: str(g('MUEBLE / POSICIÓN')), backupLocation: str(g('BACKUP MUEBLE / POSICIÓN')),
+      location: str(g('MUEBLE / POSICIÓN')) || reference, backupLocation: str(g('BACKUP MUEBLE / POSICIÓN')),
       display: g('DISPLAY') === true || norm(g('DISPLAY')) === 'TRUE',
     });
   }
-  // Physical inventory block (O:Y) — Spanish headers, located after the catalog block.
-  const p = findHeader(rows, ['MUEBLE', 'POSICIÓN', 'MODELO', 'INVENTARIO'], { from: Math.max(h.idx['MUEBLE / POSICIÓN'] || 0, h.idx['BACKUP MUEBLE / POSICIÓN'] || 0) + 1 });
   const physical = [];
-  if (p) {
-    for (const row of rows.slice(p.headerRow + 1)) {
-      const g = (k) => (p.idx[k] === undefined ? '' : row[p.idx[k]]);
+  const yes = (v) => v === true || /^(TRUE|SI|SÍ|YES|X)$/i.test(str(v));
+  const p = findHeader(rows, ['MUEBLE', 'POSICIÓN', 'MODELO', 'INVENTARIO'], { from: end + 1 });
+  const o = p ? null : findHeader(rows, ['REFERENCIA', 'MODELO', 'INVENTARIO'], { from: end + 1 });
+  const b = p || o;
+  if (b) {
+    for (const row of rows.slice(b.headerRow + 1)) {
+      const g = (k) => (b.idx[k] === undefined || b.idx[k] <= end ? '' : row[b.idx[k]]);
       if (!str(g('MODELO'))) continue;
       physical.push({
-        cabinet: str(g('MUEBLE')), position: str(g('POSICIÓN')), model: str(g('MODELO')), color: str(g('COLOR')),
+        cabinet: str(g('MUEBLE')), position: str(g('POSICIÓN')), reference: str(g('REFERENCIA')), sourceRow: num(g('FILA EXCEL')),
+        model: str(g('MODELO')), color: /^\d+(\.\d+)?$/.test(str(g('COLOR'))) ? '' : str(g('COLOR')),
         finish: str(g('ACABADO')), quantity: num(g('INVENTARIO')), sampleSize: str(g('TAMAÑO DE MUESTRA')),
+        cut20: yes(g('MUESTRA / CUT')) || yes(g('CORTE 20×20')), fullPiece: yes(g('STANDARD')) || yes(g('PIEZA COMPLETA')),
         backupLocation: str(g('BACKUP MUEBLE / POSICIÓN')), status: str(g('STATUS')) || str(g('ESTATUS')),
       });
     }
   }
-  return { items, physical };
+  return { items, physical, official: Boolean(o) };
 }
 
 export { findHeader, parseRequests, parseTracking, parseOperation, parseInventoryMoves, parseCatalog, toInstant, norm, cleanTracking };

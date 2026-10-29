@@ -121,8 +121,8 @@ var ALIAS = {
   'DELIVERY REFERENCES': ['REFERENCIAS DE ENTREGA'], 'MODEL': ['MODELO'], 'PIECE SIZE': ['TAMAÑO / TIPO DE MUESTRA'], 'NUMBER OF PIECES': ['NÚM. DE PIEZAS'],
   'STATUS': ['ESTATUS (CÓDIGO)', 'ESTATUS'], 'NOTES': ['NOTAS'], 'REQUEST ID': ['ID SOLICITUD'], 'PREPARATION DATE': ['FECHA PREPARACIÓN'], 'SHIP DATE': ['FECHA ENVÍO'],
   'DELIVERY DATE': ['FECHA ENTREGA'], 'TRACKING NO.': ['NÚM. GUÍA / TRACKING'], 'CARRIER': ['PAQUETERÍA'], 'DISPLAY': ['MOSTRAR'], 'SKU (OMITTED)': ['SKU (OMITIDO)'],
-  'SOURCE FORMAT': ['FORMATO ORIGEN'], 'SAMPLE TYPE': ['TIPO DE MUESTRA'], 'INVENTORY': ['INVENTARIO'], 'FORM LABEL': ['ETIQUETA WEB (INGLÉS)'],
-  'BACKUP MUEBLE / POSICIÓN': ['RESPALDO MUEBLE / POSICIÓN']
+  'SOURCE FORMAT': ['FORMATO ORIGEN'], 'SAMPLE TYPE': ['TIPO DE MUESTRA'], 'INVENTORY': ['INVENTARIO'], 'FORM LABEL': ['ETIQUETA WEB (INGLÉS)', 'ETIQUETA WEB'],
+  'BACKUP MUEBLE / POSICIÓN': ['RESPALDO MUEBLE / POSICIÓN', 'RESPALDO'], 'MUEBLE / POSICIÓN': ['UBICACIÓN']
 };
 function nombres(h) { return [h].concat(ALIAS[h] || []).map(norm); }
 function encabezado(rows, req, desde) {
@@ -155,7 +155,7 @@ function leerSolicitudes(rows) {
         sourceNotes: str(g(row, 'NOTES')), lines: [] };
       orden.push(no);
     }
-    r.lines.push({ line: num(g(row, 'LINE')) || r.lines.length + 1, model: str(g(row, 'MODEL')), color: str(g(row, 'COLOR')), pieceSize: str(g(row, 'PIECE SIZE')), pieces: num(g(row, 'NUMBER OF PIECES')) || 0, sku: str(g(row, 'SKU')) });
+    r.lines.push({ line: num(g(row, 'LINE')) || r.lines.length + 1, model: str(g(row, 'MODEL')), color: colorLimpio(g(row, 'COLOR')), pieceSize: str(g(row, 'PIECE SIZE')), pieces: num(g(row, 'NUMBER OF PIECES')) || 0, sku: str(g(row, 'SKU')) });
   });
   return orden.map(function (k) { return porFolio[k]; });
 }
@@ -175,37 +175,45 @@ function leerOperacion(rows) {
   return out;
 }
 // Descuentos de inventario que aplica la base por folio (la plataforma nunca descuenta otra vez).
+function colorLimpio(v) { var c = str(v); return /^\d+(\.\d+)?$/.test(c) ? '' : c; } // un número suelto en COLOR no es un color
 function leerMovimientos(rows) {
-  var h = encabezado(rows, ['FECHA', 'FOLIO', 'MODELO', 'CANTIDAD']); if (!h) return [];
+  var h = encabezado(rows, ['FOLIO', 'MODELO', 'CANTIDAD']); if (!h) return [];
   var g = function (row, k) { return h.idx[k] === undefined ? '' : row[h.idx[k]]; };
   return rows.slice(h.fila + 1).filter(function (r) { return /^[A-Z]+-\d+$/.test(str(g(r, 'FOLIO'))) && str(g(r, 'MODELO')) && num(g(r, 'CANTIDAD')) > 0; }).map(function (row) {
-    var m = { at: instante(g(row, 'FECHA')), requestNo: str(g(row, 'FOLIO')), model: str(g(row, 'MODELO')), color: str(g(row, 'COLOR')), sampleType: str(g(row, 'TIPO DESCONTADO')),
-      qty: num(g(row, 'CANTIDAD')) || 0, location: str(g(row, 'UBICACIÓN')), before: num(g(row, 'INVENTARIO ANTERIOR')), after: num(g(row, 'INVENTARIO NUEVO')), note: str(g(row, 'NOTA')) };
+    var m = { at: instante(g(row, 'FECHA')), requestNo: str(g(row, 'FOLIO')), model: str(g(row, 'MODELO')), color: str(g(row, 'COLOR')), sampleType: str(g(row, 'TIPO DESCONTADO')) || str(g(row, 'TIPO')),
+      qty: num(g(row, 'CANTIDAD')) || 0, location: str(g(row, 'UBICACIÓN')) || str(g(row, 'REFERENCIA')), before: num(g(row, 'INVENTARIO ANTERIOR')), after: num(g(row, 'INVENTARIO NUEVO')), note: str(g(row, 'NOTA')) };
     m.id = 'MOV-SRC-' + sha1([m.requestNo, m.model, m.color, m.sampleType, m.qty, m.location, m.before, m.after].map(norm).join('|')).slice(0, 16);
     return m;
   });
 }
+// Dos estructuras: la original (FORMATO ORIGEN, MUEBLE / POSICIÓN y bloque físico por MUEBLE + POSICIÓN) y la del
+// inventario oficial Houston (TAMAÑO DE MUESTRA, REFERENCIA FUENTE y bloque físico por REFERENCIA «HOUSTON2-001»).
 function leerCatalogo(rows) {
-  var h = encabezado(rows, ['DISPLAY', 'MODEL', 'COLOR', 'SOURCE FORMAT', 'SAMPLE TYPE', 'INVENTORY', 'MUEBLE / POSICIÓN']);
+  var h = encabezado(rows, ['MODEL', 'COLOR', 'SAMPLE TYPE', 'INVENTORY']);
   if (!h) throw new Error('PRODUCTOS: no se encontraron los encabezados del catálogo');
+  var fin = Math.max.apply(null, ['MODEL', 'COLOR', 'SAMPLE TYPE', 'INVENTORY', 'MUEBLE / POSICIÓN', 'BACKUP MUEBLE / POSICIÓN', 'REFERENCIA FUENTE', 'STANDARD'].map(function (k) { return h.idx[k] === undefined ? -1 : h.idx[k]; }));
+  var colFmt = h.idx['SOURCE FORMAT'] !== undefined ? h.idx['SOURCE FORMAT'] : (h.idx['TAMAÑO DE MUESTRA'] !== undefined && h.idx['TAMAÑO DE MUESTRA'] < fin ? h.idx['TAMAÑO DE MUESTRA'] : -1);
   var items = [], vistos = {};
   rows.slice(h.fila + 1).forEach(function (row) {
-    var g = function (k) { return h.idx[k] === undefined ? '' : row[h.idx[k]]; };
+    var g = function (k) { return h.idx[k] === undefined || h.idx[k] > fin ? '' : row[h.idx[k]]; };
     var model = str(g('MODEL')); if (!model) return;
-    var base = [model, str(g('COLOR')), str(g('SOURCE FORMAT')), str(g('SAMPLE TYPE'))], clave = base.join('|');
+    var formato = colFmt < 0 ? '' : str(row[colFmt]), ref = str(g('REFERENCIA FUENTE'));
+    var base = [model, str(g('COLOR')), formato, str(g('SAMPLE TYPE'))], clave = base.join('|');
     var n = (vistos[clave] || 0) + 1; vistos[clave] = n;
-    items.push({ itemId: 'ITM-' + sha1(base.concat([n > 1 ? n : '']).map(norm).join('|')).slice(0, 12), sku: str(g('SKU (OMITTED)')) || str(g('SKU')),
-      model: model, color: str(g('COLOR')), format: str(g('SOURCE FORMAT')), sampleType: str(g('SAMPLE TYPE')), formLabel: str(g('FORM LABEL')),
-      onHand: num(g('INVENTORY')) || 0, location: str(g('MUEBLE / POSICIÓN')), backupLocation: str(g('BACKUP MUEBLE / POSICIÓN')), display: g('DISPLAY') === true || norm(g('DISPLAY')) === 'TRUE' });
+    items.push({ itemId: ref ? 'ITM-' + ref : 'ITM-' + sha1(base.concat([n > 1 ? n : '']).map(norm).join('|')).slice(0, 12), sku: str(g('SKU (OMITTED)')) || str(g('SKU')), reference: ref,
+      model: model, color: colorLimpio(g('COLOR')), format: formato, sampleType: str(g('SAMPLE TYPE')), formLabel: str(g('FORM LABEL')),
+      onHand: num(g('INVENTORY')) || 0, location: str(g('MUEBLE / POSICIÓN')) || ref, backupLocation: str(g('BACKUP MUEBLE / POSICIÓN')), display: g('DISPLAY') === true || norm(g('DISPLAY')) === 'TRUE' });
   });
-  var desde = Math.max(h.idx['MUEBLE / POSICIÓN'] || 0, h.idx['BACKUP MUEBLE / POSICIÓN'] || 0) + 1;
-  var p = encabezado(rows, ['MUEBLE', 'POSICIÓN', 'MODELO', 'INVENTARIO'], desde), fisico = [];
-  if (p) rows.slice(p.fila + 1).forEach(function (row) {
-    var g = function (k) { return p.idx[k] === undefined ? '' : row[p.idx[k]]; };
+  var si = function (v) { return v === true || /^(TRUE|SI|SÍ|YES|X)$/i.test(str(v)); };
+  var p = encabezado(rows, ['MUEBLE', 'POSICIÓN', 'MODELO', 'INVENTARIO'], fin + 1), o = p ? null : encabezado(rows, ['REFERENCIA', 'MODELO', 'INVENTARIO'], fin + 1), b = p || o, fisico = [];
+  if (b) rows.slice(b.fila + 1).forEach(function (row) {
+    var g = function (k) { return b.idx[k] === undefined || b.idx[k] <= fin ? '' : row[b.idx[k]]; };
     if (!str(g('MODELO'))) return;
-    fisico.push({ cabinet: str(g('MUEBLE')), position: str(g('POSICIÓN')), model: str(g('MODELO')), color: str(g('COLOR')), finish: str(g('ACABADO')), quantity: num(g('INVENTARIO')), sampleSize: str(g('TAMAÑO DE MUESTRA')), backupLocation: str(g('BACKUP MUEBLE / POSICIÓN')), status: str(g('STATUS')) || str(g('ESTATUS')) });
+    fisico.push({ cabinet: str(g('MUEBLE')), position: str(g('POSICIÓN')), reference: str(g('REFERENCIA')), sourceRow: num(g('FILA EXCEL')), model: str(g('MODELO')), color: colorLimpio(g('COLOR')),
+      finish: str(g('ACABADO')), quantity: num(g('INVENTARIO')), sampleSize: str(g('TAMAÑO DE MUESTRA')), cut20: si(g('MUESTRA / CUT')) || si(g('CORTE 20×20')), fullPiece: si(g('STANDARD')) || si(g('PIEZA COMPLETA')),
+      backupLocation: str(g('BACKUP MUEBLE / POSICIÓN')), status: str(g('STATUS')) || str(g('ESTATUS')) });
   });
-  return { items: items, fisico: fisico };
+  return { items: items, fisico: fisico, oficial: Boolean(o) };
 }
 
 /* ------------------------------------------------------------------ 1. sincronización */
@@ -220,7 +228,8 @@ function sincronizar() {
   try {
     var ss = SpreadsheetApp.openById(CONFIG.FUENTE_ID);
     var hoja = function (n, opcional) { var sh = ss.getSheetByName(n); if (!sh) { if (opcional) return null; throw new Error('No existe la hoja ' + n); } return sh.getDataRange().getValues(); };
-    var solicitudes = leerSolicitudes(hoja('REQUESTS')), seguimiento = leerSeguimiento(hoja('TRACKING')), cat = leerCatalogo(hoja('PRODUCTS'));
+    var solicitudes = leerSolicitudes(hoja('REQUESTS')), seguimiento = leerSeguimiento(hoja('TRACKING')), cat = { items: [], fisico: [] };
+    try { cat = leerCatalogo(hoja('PRODUCTS')); } catch (e) { console.error('PRODUCTS no se leyó (las solicitudes sí se sincronizan): ' + e.message); } // un cambio en el inventario nunca frena las solicitudes
     var opV = hoja('OPERATION DATA', true), mvV = hoja('MOVIMIENTOS INVENTARIO', true);
     var operacion = opV ? leerOperacion(opV) : {}, movimientos = mvV ? leerMovimientos(mvV) : [];
     var meta = fsGet('sc_config', 'meta') || {}, hashes = meta.hashes || {}, res = { creadas: 0, actualizadas: 0, estatus: 0, conflictos: 0, articulos: 0, existencias: 0, descuentos: 0 };
@@ -285,7 +294,11 @@ function sincronizar() {
     // Desde ajustes.inventoryFrom la plataforma lleva las existencias: de la base solo se toman artículos nuevos.
     // Los cambios MANUALES hechos en la base (entradas, conteos, mermas) sí se aplican: la diferencia de la existencia
     // de la base que no se explica por sus propios descuentos de folios.
-    var aj0 = fsGet('sc_config', 'ajustes'), desde = aj0 && aj0.inventoryFrom, nuevos = {};
+    // Con la estructura oficial Houston (inventario por REFERENCIA, descuentos recalculados en la base) la base vuelve a llevar
+    // el inventario: la plataforma la copia tal cual y no descuenta por su cuenta.
+    var aj0 = fsGet('sc_config', 'ajustes'), hojas = cat.oficial || (aj0 && aj0.inventorySource === 'SHEETS');
+    if (cat.oficial && !(aj0 && aj0.inventorySource === 'SHEETS')) { var na0 = aj0 ? JSON.parse(JSON.stringify(aj0)) : {}; na0.inventorySource = 'SHEETS'; if (aj0) fsReplace('sc_config', 'ajustes', na0, aj0); else fsCreate('sc_config', 'ajustes', na0); }
+    var desde = !hojas && aj0 && aj0.inventoryFrom, nuevos = {};
     if (meta.catalogo !== hc) {
       var actuales = {}, invL = fsList('sc_inventario'); invL.forEach(function (x) { actuales[x.__id] = x; });
       var conocidos = {}; fsList('sc_movimientos').forEach(function (x) { conocidos[x.__id] = true; });
@@ -306,12 +319,15 @@ function sincronizar() {
           }
         }
       });
+      if (cat.items.length) { var enBase = {}; cat.items.forEach(function (it) { enBase[it.itemId] = true; });
+        invL.forEach(function (x) { if (!enBase[x.__id] && x.inSource !== false) { var nx2 = JSON.parse(JSON.stringify(x)); nx2.inSource = false; fsReplace('sc_inventario', x.__id, nx2, x); } }); }
       var fis = fsGet('sc_config', 'fisico');
       if (cat.fisico.length && (!desde || !fis || !(fis.rows || []).length)) fsReplace('sc_config', 'fisico', { rows: cat.fisico }, fis);
       meta.catalogo = hc;
     }
     // Descuentos de la base como movimientos del folio (id determinista: no se duplican).
     var hm = sha1(JSON.stringify(movimientos));
+    if (hojas && movimientos.length) { var ids = movimientos.map(function (m) { return m.id; }).sort(); if (JSON.stringify(ids) !== JSON.stringify(meta.baseMoves || [])) meta.baseMoves = ids; } // descuentos vigentes = los de la base
     if (meta.movimientos !== hm) {
       var inv = fsList('sc_inventario'), creadas = {};
       fsList('sc_solicitudes').forEach(function (q) { creadas[q.__id] = q.createdAt || ''; });
@@ -356,6 +372,7 @@ function moverFisico(it, delta) {
 }
 function descontarInventario() {
   var res = { descontados: 0, regresados: 0 }, aj = fsGet('sc_config', 'ajustes'), desde = aj && aj.inventoryFrom, ahora = new Date().toISOString();
+  if (aj && aj.inventorySource === 'SHEETS') return res; // la base lleva el inventario
   if (!desde) { var na = aj ? JSON.parse(JSON.stringify(aj)) : {}; na.inventoryFrom = ahora; if (aj) fsReplace('sc_config', 'ajustes', na, aj); else fsCreate('sc_config', 'ajustes', na); return res; }
   var movs = fsList('sc_movimientos'), devueltos = {};
   movs.forEach(function (m) { if (m.type === 'RETURN' && m.source === 'AUTO') devueltos[m.ref] = true; });

@@ -77,7 +77,11 @@ function applySourceSnapshot(d, { requests = [], tracking = [], operation = [], 
   // Since the switch the platform keeps the stock and deducts the requests itself; from the base it takes
   // new catalog items and the MANUAL changes made there (stock received, counts, breakage): the change of
   // the base quantity that is not explained by the base's own request deductions. Items are never deleted.
-  const from = d.settings && d.settings.inventoryFrom;
+  // The official Houston layout of the base (inventory keyed by REFERENCIA, deductions recalculated there) makes the
+  // base the inventory authority again: the platform mirrors it and does not deduct by itself.
+  if (catalog.official && (d.settings || {}).inventorySource !== 'SHEETS') d.settings = { ...(d.settings || {}), inventorySource: 'SHEETS' };
+  const sheets = (d.settings || {}).inventorySource === 'SHEETS';
+  const from = !sheets && d.settings && d.settings.inventoryFrom;
   const createdNow = new Set();
   const knownMoves = new Set(d.movements.map((m) => m.id));
   const explained = {};
@@ -102,6 +106,10 @@ function applySourceSnapshot(d, { requests = [], tracking = [], operation = [], 
   const seen = new Set(catalog.items.map((i) => i.itemId));
   for (const ex of Object.values(d.inventory)) if (!seen.has(ex.itemId) && catalog.items.length && ex.inSource !== false) ex.inSource = false;
   if (catalog.physical.length && (!from || !(d.physicalInventory || []).length) && JSON.stringify(catalog.physical) !== JSON.stringify(d.physicalInventory)) d.physicalInventory = catalog.physical;
+  if (sheets && moves.length) { // deductions in force = exactly those listed in the base now
+    const ids = moves.map((m) => m.id).sort();
+    if (JSON.stringify(ids) !== JSON.stringify((d.meta || {}).baseMoves || [])) d.meta = { ...(d.meta || {}), baseMoves: ids };
+  }
 
   // Deductions applied by the base ("MOVIMIENTOS INVENTARIO"), shown as movements of the request.
   const known = new Set(d.movements.map((m) => m.id));
@@ -109,7 +117,7 @@ function applySourceSnapshot(d, { requests = [], tracking = [], operation = [], 
     if (known.has(m.id)) continue;
     const req = d.requests[m.requestNo];
     const item = matchItem(d, m);
-    if (from && req && String(req.createdAt || '') >= from) { // the platform deducts this request itself: kept only as a record
+    if (!sheets && from && req && String(req.createdAt || '') >= from) { // the platform deducts this request itself: kept only as a record
       d.movements.push({ id: m.id, at: m.at || at, type: 'ISSUE', itemId: item ? item.itemId : null, qty: m.qty, requestNo: m.requestNo, area: 'SYSTEM', source: 'BASE_IGNORED', model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, note: 'Deducted in the base — not applied (the platform deducts on arrival)' });
       continue;
     }

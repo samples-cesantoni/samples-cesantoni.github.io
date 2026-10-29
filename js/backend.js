@@ -209,8 +209,11 @@ async function importWorkbook(form) {
     return rows;
   };
   const optional = (name, fn) => (wb.getWorksheet(name) ? fn(rowsOf(name)) : []);
+  // A change in the inventory layout must never stop the requests from coming in.
+  let catalog = { items: [], physical: [] };
+  try { catalog = parseCatalog(rowsOf('PRODUCTS')); } catch (e) { console.warn('PRODUCTS not read:', e.message); }
   const snap = {
-    requests: parseRequests(rowsOf('REQUESTS'), TZ), tracking: parseTracking(rowsOf('TRACKING'), TZ), catalog: parseCatalog(rowsOf('PRODUCTS')),
+    requests: parseRequests(rowsOf('REQUESTS'), TZ), tracking: parseTracking(rowsOf('TRACKING'), TZ), catalog,
     operation: optional('OPERATION DATA', parseOperation), moves: optional('MOVIMIENTOS INVENTARIO', (r) => parseInventoryMoves(r, TZ)),
   };
   return store.mutate((d) => applySourceSnapshot(d, snap, `Import: ${form.get('file').name}`), 'IMPORT');
@@ -337,7 +340,7 @@ on('GET', '/inventory', (q) => {
   if (q.state) physical = physical.filter((p) => p.state === q.state);
   if (q.location) physical = physical.filter((p) => norm(`Mueble ${p.cabinet}`).startsWith(norm(q.location)));
   const locations = [...new Set(Object.values(store.d.inventory).map((i) => (i.location || '').split('·')[0].trim()).filter(Boolean))].sort();
-  return { items, physical, locations };
+  return { items, physical, locations, sheets: inventory.sheetsMode(store.d) };
 });
 on('GET', '/inventory/movements', (q) => ({
   movements: store.d.movements.filter((m) => !q.itemId || m.itemId === q.itemId).slice().sort((x, y) => String(x.at).localeCompare(String(y.at))).slice(-300).reverse()

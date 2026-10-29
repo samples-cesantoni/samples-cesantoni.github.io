@@ -45,7 +45,7 @@ function detail(ctx, req, area) {
     }) })),
     checklist: checklist(d, req), evidence, shipment: d.shipments[no] || null,
     observationsList: req.observations || [], statusDates: req.statusDates || {},
-    inventoryExcluded: Boolean(req.inventoryExcluded), inventoryByPlatform: Boolean(d.settings?.inventoryFrom && String(req.createdAt || '') >= d.settings.inventoryFrom),
+    inventorySheets: (d.settings || {}).inventorySource === 'SHEETS', inventoryExcluded: Boolean(req.inventoryExcluded), inventoryByPlatform: Boolean(d.settings?.inventoryFrom && String(req.createdAt || '') >= d.settings.inventoryFrom),
     history: d.statusHistory.filter((h) => h.requestNo === no).map(({ id, from, to, at, area: a, notes, exception }) => ({ id, from, to, at, area: a === 'BODEGA' ? 'Warehouse' : a === 'SYSTEM' ? 'System' : a, notes, exception })),
     events: d.events.filter((e) => e.requestNo === no),
     times: requestTimes(ctx, req),

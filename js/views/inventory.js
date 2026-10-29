@@ -1,9 +1,10 @@
 import { api, qs } from '../api.js';
 import { t } from '../i18n.js';
-import { html, raw, esc, fmtDate, options, emptyState, modal, toast, errToast, busy } from '../ui.js';
+import { html, raw, icon, esc, fmtDate, options, emptyState, modal, toast, errToast, busy } from '../ui.js';
 
 export async function render(el, ctx) {
   const ces = ctx.session.area === 'CESANTONI';
+  let canEdit = ces;
   let tab = ctx.query.tab || 'physical';
   el.innerHTML = html`<div class="page-head"><div><h1>${t('inv.title')}</h1><p>${t('inv.sub')}</p></div></div>
     <div class="card"><form class="filters" data-f>
@@ -11,11 +12,15 @@ export async function render(el, ctx) {
       <label class="field"><span>${t('common.location')}</span><select class="input" name="location" data-loc><option value="">${t('common.all')}</option></select></label>
       <label class="field"><span>${t('inv.state')}</span><select class="input" name="state">${options(['AVAILABLE', 'LOW', 'OUT_OF_STOCK'].map((s) => ({ value: s, label: t('is.' + s) })), '', { all: t('common.all') })}</select></label>
     </form></div>
+    <div class="callout info" data-sheetsnote hidden style="margin-bottom:18px">${icon('info')}<span>${t('inv.sheetsNote')}</span></div>
     <div class="card"><div class="tabs" data-tabs></div><div data-body></div></div>`.s;
   const form = el.querySelector('[data-f]');
   let data;
   const load = async () => {
     data = await api(`/inventory${qs(Object.fromEntries(new FormData(form).entries()))}`);
+    canEdit = ces && !data.sheets;
+    el.querySelector('[data-sheetsnote]').hidden = !data.sheets;
+    el.querySelector('.page-head p').textContent = t(data.sheets ? 'inv.subSheets' : 'inv.sub');
     const loc = el.querySelector('[data-loc]'); const keep = loc.value;
     loc.innerHTML = `<option value="">${esc(t('common.all'))}</option>` + data.locations.map((l) => `<option ${l === keep ? 'selected' : ''}>${esc(l)}</option>`).join('');
     draw();
@@ -26,14 +31,16 @@ export async function render(el, ctx) {
     const body = el.querySelector('[data-body]');
     const tone = { AVAILABLE: 'green', LOW: 'amber', OUT_OF_STOCK: 'red' };
     if (tab === 'catalog') {
-      body.innerHTML = data.items.length ? html`<div class="table-wrap"><table class="t cards"><thead><tr><th>${t('common.sku')}</th><th>${t('common.model')}</th><th>${t('common.color')}</th><th>${t('inv.format')}</th><th>${t('inv.type')}</th><th>${t('common.location')}</th><th class="num">${t('inv.onHand')}</th><th>${t('inv.state')}</th>${ces ? html`<th></th>` : ''}</tr></thead><tbody>
-        ${raw(data.items.map((i) => html`<tr class="click" data-item="${i.itemId}"><td data-l="${t('common.sku')}" class="mono">${i.sku || t('common.notRegistered')}</td><td data-l="${t('common.model')}" class="strong">${i.model}</td><td data-l="${t('common.color')}">${i.color}</td><td data-l="${t('inv.format')}">${i.format}</td><td data-l="${t('inv.type')}">${i.sampleType}</td><td data-l="${t('common.location')}">${i.location || '—'}${i.backupLocation ? raw(`<div class="small muted">${esc(t('inv.backup'))}: ${esc(i.backupLocation)}</div>`) : ''}</td><td data-l="${t('inv.onHand')}" class="num strong">${i.onHand}</td><td data-l="${t('inv.state')}"><span class="badge ${tone[i.state]}">${t('is.' + i.state)}</span>${i.inSource === false ? raw(' <span class="badge">not in source</span>') : ''}</td>${ces ? html`<td style="text-align:right"><button class="btn btn-ghost btn-sm" data-adj="${i.itemId}">${t('inv.adjust')}</button></td>` : ''}</tr>`.s).join(''))}</tbody></table></div>` : emptyState().s;
+      body.innerHTML = data.items.length ? html`<div class="table-wrap"><table class="t cards"><thead><tr><th>${t('common.sku')}</th><th>${t('common.model')}</th><th>${t('common.color')}</th><th>${t('inv.format')}</th><th>${t('inv.type')}</th><th>${t('common.location')}</th><th class="num">${t('inv.onHand')}</th><th>${t('inv.state')}</th>${canEdit ? html`<th></th>` : ''}</tr></thead><tbody>
+        ${raw(data.items.map((i) => html`<tr class="click" data-item="${i.itemId}"><td data-l="${t('common.sku')}" class="mono">${i.sku || t('common.notRegistered')}</td><td data-l="${t('common.model')}" class="strong">${i.model}</td><td data-l="${t('common.color')}">${i.color}</td><td data-l="${t('inv.format')}">${i.format}</td><td data-l="${t('inv.type')}">${i.sampleType}</td><td data-l="${t('common.location')}">${i.location || '—'}${i.backupLocation ? raw(`<div class="small muted">${esc(t('inv.backup'))}: ${esc(i.backupLocation)}</div>`) : ''}</td><td data-l="${t('inv.onHand')}" class="num strong">${i.onHand}</td><td data-l="${t('inv.state')}"><span class="badge ${tone[i.state]}">${t('is.' + i.state)}</span>${i.inSource === false ? raw(' <span class="badge">not in source</span>') : ''}</td>${canEdit ? html`<td style="text-align:right"><button class="btn btn-ghost btn-sm" data-adj="${i.itemId}">${t('inv.adjust')}</button></td>` : ''}</tr>`.s).join(''))}</tbody></table></div>` : emptyState().s;
       body.querySelectorAll('[data-item]').forEach((tr) => tr.addEventListener('click', (e) => { if (e.target.closest('[data-adj]')) return; tab = 'movements'; draw(tr.dataset.item); }));
       body.querySelectorAll('[data-adj]').forEach((b) => b.addEventListener('click', () => adjust(data.items.find((i) => i.itemId === b.dataset.adj))));
     } else if (tab === 'physical') {
       const kind = (p) => [p.cut20 ? '20×20 CUT' : '', p.fullPiece ? 'STANDARD' : ''].filter(Boolean).join(' · ') || '—';
-      body.innerHTML = data.physical.length ? html`<div class="table-wrap"><table class="t cards"><thead><tr><th>${t('inv.cabinet')}</th><th>${t('inv.position')}</th><th>${t('common.model')}</th><th>${t('common.color')}</th><th>${t('inv.finish')}</th><th>${t('inv.sampleSize')}</th><th>${t('inv.type')}</th><th class="num">${t('inv.onHand')}</th><th>${t('inv.state')}</th>${ces ? html`<th></th>` : ''}</tr></thead><tbody>
-        ${raw(data.physical.map((p, i) => html`<tr><td data-l="${t('inv.cabinet')}">${p.cabinet}</td><td data-l="${t('inv.position')}">${p.position}</td><td data-l="${t('common.model')}" class="strong">${p.model}</td><td data-l="${t('common.color')}">${p.color || '—'}</td><td data-l="${t('inv.finish')}">${p.finish || '—'}</td><td data-l="${t('inv.sampleSize')}">${p.sampleSize || '—'}</td><td data-l="${t('inv.type')}" class="small">${kind(p)}</td><td data-l="${t('inv.onHand')}" class="num strong">${p.quantity ?? '—'}</td><td data-l="${t('inv.state')}"><span class="badge ${tone[p.state]}">${t('is.' + p.state)}</span></td>${ces ? html`<td style="text-align:right"><button class="btn btn-ghost btn-sm" data-padj="${i}">${t('inv.adjust')}</button></td>` : ''}</tr>`.s).join(''))}</tbody></table></div>` : emptyState().s;
+      const byRef = data.physical.some((p) => p.reference && !p.cabinet);
+      const where = (p) => (byRef ? html`<td data-l="${t('inv.reference')}" class="mono small" style="white-space:nowrap">${p.reference || '—'}</td><td data-l="${t('inv.sourceRow')}" class="small">${p.sourceRow ?? '—'}</td>` : html`<td data-l="${t('inv.cabinet')}">${p.cabinet}</td><td data-l="${t('inv.position')}">${p.position}</td>`);
+      body.innerHTML = data.physical.length ? html`<div class="table-wrap"><table class="t cards"><thead><tr>${byRef ? html`<th>${t('inv.reference')}</th><th>${t('inv.sourceRow')}</th>` : html`<th>${t('inv.cabinet')}</th><th>${t('inv.position')}</th>`}<th>${t('common.model')}</th><th>${t('common.color')}</th><th>${t('inv.finish')}</th><th>${t('inv.sampleSize')}</th><th>${t('inv.type')}</th><th class="num">${t('inv.onHand')}</th><th>${t('inv.state')}</th>${canEdit ? html`<th></th>` : ''}</tr></thead><tbody>
+        ${raw(data.physical.map((p, i) => html`<tr>${where(p)}<td data-l="${t('common.model')}" class="strong">${p.model}</td><td data-l="${t('common.color')}">${p.color || '—'}</td><td data-l="${t('inv.finish')}">${p.finish || '—'}</td><td data-l="${t('inv.sampleSize')}">${p.sampleSize || '—'}</td><td data-l="${t('inv.type')}" class="small">${kind(p)}</td><td data-l="${t('inv.onHand')}" class="num strong">${p.quantity ?? '—'}</td><td data-l="${t('inv.state')}"><span class="badge ${tone[p.state]}">${t('is.' + p.state)}</span></td>${canEdit ? html`<td style="text-align:right"><button class="btn btn-ghost btn-sm" data-padj="${i}">${t('inv.adjust')}</button></td>` : ''}</tr>`.s).join(''))}</tbody></table></div>` : emptyState().s;
       body.querySelectorAll('[data-padj]').forEach((b) => b.addEventListener('click', () => adjustPlace(data.physical[Number(b.dataset.padj)])));
     } else {
       const { movements } = await api(`/inventory/movements${itemId ? `?itemId=${encodeURIComponent(itemId)}` : ''}`);
