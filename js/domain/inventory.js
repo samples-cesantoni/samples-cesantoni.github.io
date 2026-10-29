@@ -203,6 +203,25 @@ function adjustStock(d, { itemId, newQty, reason }, area) {
   return { item: it };
 }
 
+// CESANTONI: physical count of one cabinet/position. The catalog items stored there follow it.
+function adjustPhysical(d, { cabinet, position, model, newQty, reason }, area) {
+  const q = Number(newQty);
+  if (!Number.isInteger(q) || q < 0) throw new AppError(400, 'INVALID_QTY', 'Quantity must be a whole number, zero or more');
+  if (String(reason || '').trim().length < 3) throw new AppError(400, 'REASON_REQUIRED', 'Write the reason (e.g. samples received, physical count)');
+  const row = physicalAt(d, `Mueble ${cabinet} · Pos. ${position}`, model);
+  if (!row) throw new AppError(404, 'LOCATION_NOT_FOUND', 'Location not found in the physical inventory');
+  const before = row.quantity ?? 0;
+  if (q === before) return { row };
+  const at = new Date().toISOString();
+  const items = Object.values(d.inventory).filter((it) => physicalAt(d, it.location, it.model) === row);
+  d.physicalInventory = d.physicalInventory.map((x) => (x === row ? { ...x, quantity: q } : x));
+  const location = `Mueble ${row.cabinet} · Pos. ${row.position}`;
+  for (const it of items) it.onHand = q;
+  d.movements.push({ id: rid('MOV'), at, type: q > before ? 'RECEIPT' : 'ADJUST', itemId: items[0] ? items[0].itemId : null, qty: Math.abs(q - before), requestNo: null, area,
+    model: row.model, color: row.color, sampleType: row.sampleSize, location, before, after: q, note: String(reason).trim().slice(0, 300) });
+  return { row: { ...row, quantity: q } };
+}
+
 // CESANTONI: a whole request, or some of its lines, is not deducted (e.g. full pieces that were not sent).
 // Excluding gives the pieces back at once (also those the base deducted); including again deducts them.
 function setInventoryExclusion(d, requestNo, excluded) {
@@ -254,7 +273,9 @@ function applyInitialInventory(d, rows, name) {
   d.physicalInventory = phys.map((p, j) => {
     const pr = pairs.find(([, x]) => x === j);
     if (!pr) return p;
-    return { ...p, initialQuantity: pr[0].qty, quantity: Math.max(0, pr[0].qty - (ded.get(p) || 0)) };
+    const r = pr[0]; // the Excel is the reference: its names replace the base's
+    return { ...p, model: r.model, color: r.color, finish: r.finish || p.finish, sampleSize: r.sampleSize || p.sampleSize, cut20: r.cut20, fullPiece: r.fullPiece,
+      initialQuantity: r.qty, quantity: Math.max(0, r.qty - (ded.get(p) || 0)) };
   });
   let itemsChanged = 0;
   for (const it of Object.values(d.inventory)) {
@@ -268,4 +289,4 @@ function applyInitialInventory(d, rows, name) {
   return { rows: rows.length, matched: pairs.length, unmatched, itemsChanged };
 }
 
-export { listItems, itemView, candidates, lineAllocation, reserve, release, issue, reservedFor, reconcileInventory, needsReconcile, adjustStock, setInventoryExclusion, setLineExclusion, applyInitialInventory, activeAuto, activeDeductions, touchPhysical, cutover as inventoryFrom };
+export { listItems, itemView, candidates, lineAllocation, reserve, release, issue, reservedFor, reconcileInventory, needsReconcile, adjustStock, setInventoryExclusion, setLineExclusion, applyInitialInventory, adjustPhysical, physicalAt, activeAuto, activeDeductions, touchPhysical, cutover as inventoryFrom };

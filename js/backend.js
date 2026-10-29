@@ -229,9 +229,10 @@ async function importInitialInventory(form) {
     const hi = rows.findIndex((r) => r.some((c) => norm(c) === 'MODELO') && r.some((c) => norm(c) === 'INVENTARIO'));
     if (hi < 0) continue;
     const ix = (name) => rows[hi].findIndex((c) => norm(c) === name);
-    const [m, co, ac, sz, q] = ['MODELO', 'COLOR', 'ACABADO', 'TAMAÑO DE MUESTRA', 'INVENTARIO'].map(ix);
+    const [m, co, ac, sz, q, cut, full] = ['MODELO', 'COLOR', 'ACABADO', 'TAMAÑO DE MUESTRA', 'INVENTARIO', '20X20 CUT', 'STANDARD'].map(ix);
+    const yes = (v) => /^(SI|SÍ|YES|TRUE|X|1)$/i.test(String(v ?? '').trim());
     const list = rows.slice(hi + 1).filter((r) => String(r[m] || '').trim() && r[q] !== '' && !isNaN(Number(r[q])))
-      .map((r) => ({ model: String(r[m]).trim(), color: co >= 0 ? String(r[co] || '').trim() : '', finish: ac >= 0 ? String(r[ac] || '').trim() : '', sampleSize: sz >= 0 ? String(r[sz] || '').trim() : '', qty: Math.max(0, Math.round(Number(r[q]))) }));
+      .map((r) => ({ model: String(r[m]).trim(), color: co >= 0 ? String(r[co] || '').trim() : '', finish: ac >= 0 ? String(r[ac] || '').trim() : '', sampleSize: sz >= 0 ? String(r[sz] || '').trim() : '', cut20: cut >= 0 && yes(r[cut]), fullPiece: full >= 0 && yes(r[full]), qty: Math.max(0, Math.round(Number(r[q]))) }));
     if (!list.length) break;
     return store.mutate((d) => inventory.applyInitialInventory(d, list, form.get('file').name), 'INVENTORY_INITIAL');
   }
@@ -331,8 +332,9 @@ on('GET', '/inventory', (q) => {
   if (q.location) items = items.filter((i) => norm(i.location).startsWith(norm(q.location)) || norm(i.backupLocation).startsWith(norm(q.location)));
   if (q.state) items = items.filter((i) => i.state === q.state);
   items.sort((a, b) => a.model.localeCompare(b.model) || a.color.localeCompare(b.color));
-  let physical = store.d.physicalInventory || [];
-  if (term) physical = physical.filter((p) => [p.model, p.color, p.finish].some((v) => norm(v).includes(term)));
+  let physical = (store.d.physicalInventory || []).map((p) => ({ ...p, color: /^\d+(\.\d+)?$/.test(String(p.color || '')) ? '' : p.color, state: !(p.quantity > 0) ? 'OUT_OF_STOCK' : p.quantity < 5 ? 'LOW' : 'AVAILABLE' }));
+  if (term) physical = physical.filter((p) => [p.model, p.color, p.finish, p.sampleSize].some((v) => norm(v).includes(term)));
+  if (q.state) physical = physical.filter((p) => p.state === q.state);
   if (q.location) physical = physical.filter((p) => norm(`Mueble ${p.cabinet}`).startsWith(norm(q.location)));
   const locations = [...new Set(Object.values(store.d.inventory).map((i) => (i.location || '').split('·')[0].trim()).filter(Boolean))].sort();
   return { items, physical, locations };
@@ -343,6 +345,7 @@ on('GET', '/inventory/movements', (q) => ({
 }));
 on('POST', '/inventory/initial', (q, b, p, form) => importInitialInventory(form), ces);
 on('POST', '/requests/:no/lines/:line/inventory-exclusion', (q, b, [no, line]) => store.mutate((d) => inventory.setLineExclusion(d, no, line, b.excluded), 'INVENTORY_LINE_EXCLUSION'), ces);
+on('POST', '/inventory/physical-adjust', (q, b) => store.mutate((d) => inventory.adjustPhysical(d, b, store.area), 'INVENTORY_PHYSICAL_ADJUST'), ces);
 on('POST', '/inventory/adjust', (q, b) => store.mutate((d) => inventory.adjustStock(d, b, store.area), 'INVENTORY_ADJUST'), ces);
 on('POST', '/requests/:no/inventory-exclusion', (q, b, [no]) => store.mutate((d) => { const r = inventory.setInventoryExclusion(d, no, b.excluded); inventory.reconcileInventory(d); return r; }, 'INVENTORY_EXCLUSION'), ces);
 for (const op of ['reserve', 'release', 'issue']) on('POST', `/inventory/${op}`, (q, b) => store.mutate((d) => inventory[op](d, b, store.area), `INVENTORY_${op.toUpperCase()}`));

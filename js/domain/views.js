@@ -1,7 +1,7 @@
 // Role-aware projections. Financial fields are only ever attached for CESANTONI, so a
 // warehouse session cannot receive them from any endpoint that uses these builders.
 import { checklist } from './checklist.js';
-import { lineAllocation } from './inventory.js';
+import { lineAllocation, physicalAt } from './inventory.js';
 import { requestTimes, overdue, timeCtx } from './metrics.js';
 import { findDuplicates } from './duplicates.js';
 import { requirements } from './status.js';
@@ -39,7 +39,10 @@ function detail(ctx, req, area) {
   const out = {
     ...summary(ctx, req, area, timeCtx(ctx)),
     phone: req.customer.phone, deliveryRefs: req.deliveryRefs, requestId: req.requestId,
-    lines: lineAllocation(d, no).map((l) => ({ ...l, candidates: l.candidates.map(({ itemId, model, color, format, sampleType, location, available, onHand, reserved, sku, preferred }) => ({ itemId, model, color, format, sampleType, location, available, onHand, reserved, sku, preferred })) })),
+    lines: lineAllocation(d, no).map((l) => ({ ...l, candidates: l.candidates.map(({ itemId, model, color, format, sampleType, location, available, onHand, reserved, sku, preferred }) => {
+      const p = physicalAt(d, location, model); // shown as in the warehouse inventory (Excel), not the web catalog
+      return { itemId, model: p ? p.model : model, color: p ? (/^\d+(\.\d+)?$/.test(String(p.color || '')) ? '' : p.color) : color, finish: p ? p.finish : '', sampleSize: p ? p.sampleSize : format, format, sampleType, location, available, onHand: p && typeof p.quantity === 'number' ? p.quantity : onHand, reserved, sku, preferred };
+    }) })),
     checklist: checklist(d, req), evidence, shipment: d.shipments[no] || null,
     observationsList: req.observations || [], statusDates: req.statusDates || {},
     inventoryExcluded: Boolean(req.inventoryExcluded), inventoryByPlatform: Boolean(d.settings?.inventoryFrom && String(req.createdAt || '') >= d.settings.inventoryFrom),
