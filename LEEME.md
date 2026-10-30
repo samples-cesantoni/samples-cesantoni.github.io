@@ -26,7 +26,9 @@ Igual que proveedores y movimientos:
    Si el correo ya tiene cuenta en proveedores o movimientos, se usa la misma contraseña.
 5. **Usuarios**: en *Configuración › Usuarios por área*, el administrador da de alta a cada persona con perfil
    *Bodega (ARMEX)*, *CESANTONI* o *CESANTONI · administrador* y le asigna una contraseña temporal. La persona la cambia al entrar.
-6. **Apps Script** (sincronización automática y recordatorios):
+6. **Apps Script** (sincronización automática y recordatorios). Recomendado: pega `apps-script/Cargador.gs` en lugar de `Samples.gs`;
+   en cada corrida descarga de este repositorio la versión publicada de `Samples.gs` (con respaldo si GitHub no responde),
+   así las correcciones llegan solas sin volver a copiar código. El resto de los pasos es igual:
    - En https://script.google.com, con la cuenta dueña del proyecto de Firebase y de las bases de Sheets, crea el proyecto «Samples CESANTONI».
    - Pega `apps-script/Samples.gs`. En *Configuración del proyecto* marca «Mostrar appsscript.json» y pega `apps-script/appsscript.json`.
    - Ejecuta `instalar` una vez y autoriza los permisos. Crea los activadores: sincronizar cada 15 min, recordatorios cada hora y copia a la base de evidencias cada 30 min.
