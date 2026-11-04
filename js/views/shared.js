@@ -84,6 +84,14 @@ export async function requestPicker(el, { value, onPick, activeOnly = false, pla
     <datalist id="rq-list-${el.id || 'x'}">${raw(requests.map((r) => `<option value="${esc(r.requestNo)}">${esc(r.requestNo)} · ${esc(r.company || r.customerName)} · ${esc(t('st.' + r.status))}</option>`).join(''))}</datalist>`.s;
   const input = el.querySelector('input');
   const fire = () => { const v = input.value.trim().toUpperCase(); const hit = requests.find((r) => r.requestNo === v); if (hit) onPick(hit.requestNo); };
+  // Quick pick: the most recent open requests, one click away.
+  const open = requests.filter((r) => !['DELIVERED', 'CANCELLED'].includes(r.status)).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 6);
+  if (open.length) {
+    const q = document.createElement('div'); q.className = 'quick-pick';
+    q.innerHTML = `<span class="muted small">${esc(t('pick.recent'))}</span>` + open.map((r) => `<button type="button" class="chip" data-qp="${esc(r.requestNo)}" title="${esc(r.company || r.customerName || '')}">${esc(r.requestNo)}<span>${esc(t('st.' + r.status))}</span></button>`).join('');
+    el.appendChild(q);
+    q.querySelectorAll('[data-qp]').forEach((b) => b.addEventListener('click', () => { input.value = b.dataset.qp; q.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c === b)); fire(); }));
+  }
   input.addEventListener('change', fire);
   input.addEventListener('input', () => { if (requests.some((r) => r.requestNo === input.value.trim().toUpperCase())) fire(); });
   return requests;

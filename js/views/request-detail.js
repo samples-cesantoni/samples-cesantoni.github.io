@@ -18,16 +18,40 @@ export async function render(el, ctx) {
   const setTab = (x) => { tab = x; history.replaceState(null, '', `#/requests/${encodeURIComponent(no)}?tab=${x}`); draw(); };
   const reload = async () => { await load(); draw(); ctx.refreshBadges(); };
 
+  // Executive summary: who, where, how it travels, what is next — before any tab.
+  const TAB_OF = { PREPARATION: 'prep', PACKAGING: 'pack', TRACKING_NUMBER: 'ship', SHIPPING_LABEL: 'ship', DROPOFF: 'ship', DELIVERY: 'delivery', PICKUP_CONFIRMATION: 'delivery', COLLECTION_PROOF: 'delivery', HANDOVER: 'delivery' };
+  function nextStep() {
+    if (['DELIVERED', 'CANCELLED'].includes(det.status)) return { tone: 'ok', text: t(det.status === 'DELIVERED' ? 'det.nsDelivered' : 'det.nsCancelled') };
+    if (!det.deliveryMode) return { tone: 'warn', text: t('det.nsMode'), tab: 'general' };
+    const miss = det.checklist.items.find((i) => ['MISSING', 'RETURNED'].includes(i.state));
+    if (miss) return { tone: miss.state === 'RETURNED' ? 'danger' : 'warn', text: `${t(miss.state === 'RETURNED' ? 'det.nsReturned' : 'det.nsNext')}: ${t('cl.k.' + miss.key, miss.label)}`, tab: TAB_OF[miss.key] };
+    if (det.checklist.items.some((i) => i.state === 'PENDING_REVIEW')) return { tone: 'info', text: t('det.nsReview'), link: '#/validation' };
+    return { tone: 'ok', text: t('det.nsComplete') };
+  }
   function header() {
-    return html`<div class="card"><div class="req-head"><div>
-      <a href="#/requests" class="small">← ${t('req.title')}</a>
-      <div class="folio">${det.requestNo}</div>
-      <div class="meta">${statusBadge(det.status)}<span>${fmtDate(det.createdAt)}</span><span>·</span><span>${det.company || det.customerName}</span><span>·</span><span>${modeLabel(det.deliveryMode)}</span>${docProgress(det.checklist.pct, det.checklist.light)}</div>
-    </div><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-      ${area === 'CESANTONI' ? html`<a class="btn btn-primary" href="#/status?request=${encodeURIComponent(det.requestNo)}">${icon('status')}${t('det.changeStatus')}</a>` : ''}
-      <a class="btn btn-ghost" href="#/labels?request=${encodeURIComponent(det.requestNo)}">${icon('qr')}${t('det.labels')}</a>
-      <button class="btn btn-dark" data-pdf>${icon('file')}${t('det.pdf')}</button>
-    </div></div></div>`;
+    const sh = det.shipment || {};
+    const fact = (k, v, sub = '') => `<div class="fact"><div class="k">${esc(t(k))}</div><div class="v">${v}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+    const ns = nextStep();
+    const track = sh.trackingNo ? (sh.trackingUrl ? `<a href="${esc(sh.trackingUrl)}" target="_blank" rel="noopener noreferrer" class="mono">${esc(sh.trackingNo)}</a>` : `<span class="mono">${esc(sh.trackingNo)}</span>`) : '';
+    return html`<div class="card req-summary">
+      <div class="req-top"><div>
+        <a href="#/requests" class="small">← ${t('req.title')}</a>
+        <div class="folio-line"><span class="folio">${det.requestNo}</span>${statusBadge(det.status)}${det.overdue ? raw(`<span class="badge red">${esc(t('det.overdueOne'))}</span>`) : ''}</div>
+      </div><div class="actions">
+        ${area === 'CESANTONI' ? html`<a class="btn btn-primary" href="#/status?request=${encodeURIComponent(det.requestNo)}">${icon('status')}${t('det.changeStatus')}</a>` : ''}
+        <a class="btn btn-ghost" href="#/labels?request=${encodeURIComponent(det.requestNo)}">${icon('qr')}${t('det.labels')}</a>
+        <button class="btn btn-dark" data-pdf>${icon('file')}${t('det.pdf')}</button>
+      </div></div>
+      <div class="facts">${raw([
+        fact('common.customer', esc(det.company || det.customerName || '—'), det.company && det.customerName !== det.company ? esc(det.customerName || '') : ''),
+        fact('req.destination', esc([det.city, det.state].filter(Boolean).join(', ') || det.country || '—'), esc(det.city || det.state ? det.country || '' : '')),
+        fact('req.delivery', esc(modeLabel(det.deliveryMode)), sh.carrier ? `${esc(sh.carrier)} ${track}` : ''),
+        fact('req.date', esc(fmtDate(det.createdAt))),
+        fact('common.products', `${det.lines.length} <span class="muted small">· ${det.pieces} ${esc(t('common.pieces').toLowerCase())}</span>`),
+        fact('common.documentation', docProgress(det.checklist.pct, det.checklist.light).s),
+      ].join(''))}</div>
+      <div class="next ${ns.tone}">${icon(ns.tone === 'ok' ? 'check' : 'info')}<span>${ns.text}</span>${ns.tab ? raw(`<button class="btn btn-sm btn-ghost" data-goto="${ns.tab}">${esc(t('det.nsGo'))}</button>`) : ns.link ? raw(`<a class="btn btn-sm btn-ghost" href="${ns.link}">${esc(t('det.nsGo'))}</a>`) : ''}</div>
+    </div>`;
   }
   const count = (n) => (n ? `<span class="count">${n}</span>` : '');
   const evOf = (pred) => det.evidence.filter(pred);
@@ -140,6 +164,7 @@ export async function render(el, ctx) {
 
   function bind() {
     el.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+    el.querySelector('[data-goto]')?.addEventListener('click', (e) => setTab(e.currentTarget.dataset.goto));
     const pdf = (financial, btn) => busy(btn, () => download(`/requests/${encodeURIComponent(no)}/dossier.pdf?size=${el.querySelector('[data-size]')?.value || 'LETTER'}${financial ? '&financial=1' : ''}`, `${no}.pdf`)).catch(() => {});
     el.querySelector('[data-pdf]')?.addEventListener('click', (e) => pdf(false, e.currentTarget));
     el.querySelector('[data-pdf2]')?.addEventListener('click', (e) => pdf(false, e.currentTarget));
