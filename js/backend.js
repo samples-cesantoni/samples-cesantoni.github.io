@@ -14,6 +14,7 @@ import * as evidence from './domain/evidence.js';
 import * as status from './domain/status.js';
 import * as notices from './domain/notices.js';
 import { computeAlerts } from './domain/alerts.js';
+import { monitor } from './domain/carrier-watch.js';
 import { findDuplicates } from './domain/duplicates.js';
 import * as finance from './domain/finance.js';
 import * as analytics from './domain/analytics.js';
@@ -436,6 +437,7 @@ on('POST', '/notices/:id/stop-reminders', (q, b, [id]) => store.mutate((d) => no
 on('POST', '/notices/:id/cancel', (q, b, [id]) => store.mutate((d) => notices.cancelNotice(d, id, 'CESANTONI'), 'NOTICE_CANCEL'), ces);
 
 on('GET', '/alerts', () => ({ alerts: computeAlerts(ctx, store.area) }));
+on('GET', '/tracking/monitor', () => monitor(store.d));
 on('GET', '/duplicates', () => ({ duplicates: findDuplicates(store.d, ctx.settings()) }), ces);
 on('POST', '/duplicates/decision', (q, b) => {
   if (!['NOT_DUPLICATE', 'CONFIRMED_DUPLICATE', 'UNDER_REVIEW'].includes(b.decision)) throw new AppError(400, 'INVALID_DECISION', 'Invalid decision');

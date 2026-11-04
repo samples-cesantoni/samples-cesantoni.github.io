@@ -4,8 +4,8 @@ import { html, raw, icon, esc, usd, num, formData, statusBadge } from '../ui.js'
 import { barChart, lineChart, chartToPng } from '../charts.js';
 
 export async function render(el, ctx) {
-  const [first, stockData, mails, reqs] = await Promise.all([api('/dashboard'), api('/stock').catch(() => null), api('/emails?status=QUEUED').catch(() => ({ emails: [] })), api('/requests').catch(() => ({ requests: [] }))]);
-  const extra = { queued: mails.emails.length, out: stockData ? stockData.kpis.out : 0, low: stockData ? stockData.kpis.low : 0 };
+  const [first, stockData, mails, reqs, mon] = await Promise.all([api('/dashboard'), api('/stock').catch(() => null), api('/emails?status=QUEUED').catch(() => ({ emails: [] })), api('/requests').catch(() => ({ requests: [] })), api('/tracking/monitor').catch(() => null)]);
+  const extra = { carrierRisk: mon ? mon.atRisk : 0, trackingDown: mon && mon.health.state === 'DOWN' && mon.monitored ? 1 : 0, queued: mails.emails.length, out: stockData ? stockData.kpis.out : 0, low: stockData ? stockData.kpis.low : 0 };
   const recent = reqs.requests.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 7);
   const o = first.options;
   const sel = (name, label, list) => html`<select class="input" name="${name}" aria-label="${label}"><option value="">${label}</option>${raw(list.map((x) => (typeof x === 'object' ? `<option value="${esc(x.value)}">${esc(x.label)}</option>` : `<option>${esc(x)}</option>`)).join(''))}</select>`;
@@ -52,7 +52,7 @@ export async function render(el, ctx) {
     el.querySelector('[data-pipe]').innerHTML = stages.map(([st, n]) => `<a href="#/requests?status=${st}"><div class="n">${n}</div><div class="l">${esc(t('st.' + st))}</div><div class="bar"><i style="width:${Math.round((n / max) * 100)}%"></i></div></a>`).join('');
     // Alerts first: only what needs action, most critical first; a single quiet line when all is clear.
     const alerts = [
-      [k.overdue, t('k.overdue'), '#/alerts', 'red', 'alert'], [k.onHold, t('k.onHold'), '#/requests?status=ON_HOLD', 'red', 'alert'], [extra.out, t('stk.kOut'), '#/inventory', 'red', 'inventory'],
+      [extra.trackingDown, t('at.TRACKING_DOWN'), '#/shipments', 'red', 'truck'], [k.overdue, t('k.overdue'), '#/alerts', 'red', 'alert'], [extra.carrierRisk, t('dash.carrierRisk'), '#/shipments?q0=RISK', 'red', 'truck'], [k.onHold, t('k.onHold'), '#/requests?status=ON_HOLD', 'red', 'alert'], [extra.out, t('stk.kOut'), '#/inventory', 'red', 'inventory'],
       [k.pendingEvidence, t('k.pendingEvidence'), '#/validation', 'amber', 'shield'], [extra.queued, t('dash.mailQueued'), '#/emails', 'amber', 'mail'],
       [k.invoicesPending, t('k.invoicesPending'), '#/billing', 'amber', 'invoice'], [extra.low, t('stk.kLow'), '#/inventory', 'amber', 'inventory'],
     ].filter((a) => a[0] > 0);

@@ -31,14 +31,14 @@ export const SPEC = [
   { key: 'sheetOutbox', col: 'salida', ces: true },
   { key: 'intake', col: 'pedidos', map: true, ces: true, flag: 'nuevo' }, // solicitudes del formulario público, antes de volverse folio
 ];
-const SINGLES = [{ key: 'settings', id: 'ajustes' }, { key: 'physicalInventory', id: 'fisico', field: 'rows' }, { key: 'meta', id: 'meta' }, { key: 'publicCatalog', id: 'catalogo' }];
+const SINGLES = [{ key: 'settings', id: 'ajustes' }, { key: 'physicalInventory', id: 'fisico', field: 'rows' }, { key: 'meta', id: 'meta' }, { key: 'publicCatalog', id: 'catalogo' }, { key: 'tracking', id: 'rastreo' }];
 const CHUNK = 700000;
 const OVERLAP = 10 * 60 * 1000; // margen por diferencias de reloj entre equipos
 
 export const empty = () => ({
   meta: { lastSync: null, source: null }, requests: {}, inventory: {}, physicalInventory: [], reservations: [], movements: [], evidence: [],
   files: {}, shipments: {}, statusHistory: [], events: [], emails: [], notices: [], invoices: [], shippingCosts: {}, duplicateDecisions: {},
-  operations: {}, sheetOutbox: [], syncLog: [], settings: null, intake: {}, publicCatalog: null,
+  operations: {}, sheetOutbox: [], syncLog: [], settings: null, intake: {}, publicCatalog: null, tracking: null,
 });
 const clone = (x) => JSON.parse(JSON.stringify(x === undefined ? null : x));
 const docId = (id) => String(id).replace(/\//g, '_');

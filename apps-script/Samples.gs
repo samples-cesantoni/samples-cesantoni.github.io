@@ -726,7 +726,8 @@ function rastreo() {
   var lock = LockService.getScriptLock(); if (!lock.tryLock(30000)) return;
   var res = { consultadas: 0, cambios: 0, errores: 0 };
   try {
-    var token = tokenUps();
+    var token = null;
+    try { token = tokenUps(); } catch (e) { res.errorApi = String(e.message || e).slice(0, 300); }
     if (token) {
       var solicitudes = {}; fsList('sc_solicitudes').forEach(function (r) { solicitudes[r.__id] = r; });
       fsList('sc_envios').forEach(function (s) {
@@ -736,11 +737,22 @@ function rastreo() {
         try { u = consultarUps(token, s.trackingNo); res.consultadas++; } catch (e) { res.errores++; return; }
         if (u) res.cambios += aplicarPaqueteria(no, req, u);
       });
+      if (res.errores && !res.consultadas) res.errorApi = 'UPS API: ' + res.errores + ' consultas fallidas';
     }
     try { var cu = correosUps(); res.correosUps = cu.leidos; res.cambios += cu.cambios; } catch (e) { res.errorGmail = String(e.message || e).slice(0, 300); console.error('Avisos UPS en Gmail: ' + res.errorGmail); }
     res.correos = avisosAutomaticos();
     return res;
-  } finally { lock.releaseLock(); }
+  } finally {
+    try { latidoRastreo(res, Boolean(token)); } catch (e) { console.error('Latido de rastreo: ' + e); }
+    lock.releaseLock();
+  }
+}
+// Latido del monitoreo: la plataforma lo lee (sc_config/rastreo) para saber si el rastreo automático está corriendo.
+function latidoRastreo(res, ups) {
+  var prev = fsGet('sc_config', 'rastreo');
+  var d = { lastRun: new Date().toISOString(), ups: ups, apiError: res.errorApi || '', gmailError: res.errorGmail || '', read: res.correosUps || 0,
+    queried: res.consultadas || 0, changes: res.cambios || 0, lastChangeAt: res.cambios ? new Date().toISOString() : (prev && prev.lastChangeAt) || '' };
+  fsReplace('sc_config', 'rastreo', d, prev);
 }
 function tarjetaEstatus(req, estado, envio, nombre) {
   var fecha = Utilities.formatDate(new Date(), CONFIG.ZONA, 'MMM dd, yyyy');

@@ -3,9 +3,10 @@ import { checklist } from './checklist.js';
 import { lineAllocation } from './inventory.js';
 import { timeCtx, requestTimes, overdue } from './metrics.js';
 import { findDuplicates } from './duplicates.js';
+import { monitor } from './carrier-watch.js';
 
 // Alert types visible to the warehouse (capture, inventory and documentation only).
-const BODEGA_TYPES = new Set(['NOT_PREPARED', 'MISSING_EVIDENCE', 'TRACKING_PENDING', 'DROPOFF_MISSING', 'EVIDENCE_RETURNED', 'INVENTORY_SHORTAGE', 'OVERDUE']);
+const BODEGA_TYPES = new Set(['CARRIER_NO_SCAN', 'NOT_PREPARED', 'MISSING_EVIDENCE', 'TRACKING_PENDING', 'DROPOFF_MISSING', 'EVIDENCE_RETURNED', 'INVENTORY_SHORTAGE', 'OVERDUE']);
 
 function computeAlerts(ctx, area) {
   const d = ctx.store.data;
@@ -36,6 +37,13 @@ function computeAlerts(ctx, area) {
     if (lineAllocation(d, no).some((l) => l.shortage)) add('INVENTORY_SHORTAGE', 'CRITICAL', no, 'Insufficient stock for at least one line');
     const pending = d.evidence.filter((e) => e.requestNo === no && e.state === 'PENDING' && !e.supersededBy).length;
     if (pending) add('PENDING_REVIEW', 'INFO', no, `${pending} evidence file(s) awaiting validation`);
+  }
+  // Carrier monitoring: shipments at risk on the road, and the automatic tracking itself.
+  const mon = monitor(d);
+  for (const w of mon.list) if (w.risk) add('CARRIER_' + w.risk.kind, w.risk.severity, w.requestNo, w.risk.msg);
+  if (area === 'CESANTONI' && mon.list.some((w) => w.auto)) {
+    if (mon.health.state === 'DOWN') add('TRACKING_DOWN', 'CRITICAL', '—', `Automatic carrier tracking has not run for ${mon.health.minutes} min (Apps Script "rastreo")`);
+    else if (mon.health.state === 'DEGRADED') add('TRACKING_DEGRADED', 'WARNING', '—', `Carrier tracking source error: ${mon.health.tr.gmailError || mon.health.tr.apiError}`);
   }
   if (area === 'CESANTONI') {
     for (const dup of findDuplicates(d, settings)) if (!dup.decision) add('POSSIBLE_DUPLICATE', 'WARNING', dup.requests.join(' / '), dup.reasons.join(' · '));
