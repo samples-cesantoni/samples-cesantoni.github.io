@@ -21,6 +21,7 @@ export async function render(el, ctx) {
       ${sel('mode', t('common.mode'), ctx.meta.deliveryModes.map((m) => ({ value: m, label: t('mode.' + m) })))}
       ${sel('status', t('common.status'), ctx.meta.statuses.map((x) => ({ value: x, label: t('st.' + x) })))}
     </form>
+    <div class="alert-strip" data-attn aria-label="${t('dash.attention')}"></div>
     <div class="exec-hero" data-hero></div>
     <div class="exec-grid">
       <div class="exec-col">
@@ -28,7 +29,6 @@ export async function render(el, ctx) {
         <div class="card"><div class="card-head"><h2>${t('dash.recent')}</h2><a class="small" href="#/requests">${t('dash.seeAll')}</a></div><div data-recent></div></div>
       </div>
       <div class="exec-col">
-        <div class="card"><div class="card-head"><h2>${t('dash.attention')}</h2></div><div class="attn" data-attn></div></div>
         <div class="card"><div class="card-head"><h2>${t('p.title')}</h2></div><div class="attn" data-perf></div></div>
       </div>
     </div>
@@ -50,12 +50,15 @@ export async function render(el, ctx) {
     const stages = [['RECEIVED', k.received], ['PREPARING', k.preparing], ['PREPARED', k.prepared], ['SHIPPED', k.shipped], ['DELIVERED', k.delivered], ['ON_HOLD', k.onHold]];
     const max = Math.max(1, ...stages.map((x) => x[1]));
     el.querySelector('[data-pipe]').innerHTML = stages.map(([st, n]) => `<a href="#/requests?status=${st}"><div class="n">${n}</div><div class="l">${esc(t('st.' + st))}</div><div class="bar"><i style="width:${Math.round((n / max) * 100)}%"></i></div></a>`).join('');
-    const row = (n, label, link, tone) => `<a href="${link}"><span class="n ${n ? tone : ''}">${esc(n)}</span><span class="t">${esc(label)}</span><span class="go">›</span></a>`;
-    el.querySelector('[data-attn]').innerHTML = [
-      row(k.pendingEvidence, t('k.pendingEvidence'), '#/validation', 'amber'), row(k.overdue, t('k.overdue'), '#/alerts', 'red'), row(k.onHold, t('k.onHold'), '#/requests?status=ON_HOLD', 'red'),
-      row(k.invoicesPending, t('k.invoicesPending'), '#/billing', 'amber'), row(extra.queued, t('dash.mailQueued'), '#/emails', 'amber'),
-      row(extra.out, t('stk.kOut'), '#/inventory', 'red'), row(extra.low, t('stk.kLow'), '#/inventory', 'amber'),
-    ].join('');
+    // Alerts first: only what needs action, most critical first; a single quiet line when all is clear.
+    const alerts = [
+      [k.overdue, t('k.overdue'), '#/alerts', 'red', 'alert'], [k.onHold, t('k.onHold'), '#/requests?status=ON_HOLD', 'red', 'alert'], [extra.out, t('stk.kOut'), '#/inventory', 'red', 'inventory'],
+      [k.pendingEvidence, t('k.pendingEvidence'), '#/validation', 'amber', 'shield'], [extra.queued, t('dash.mailQueued'), '#/emails', 'amber', 'mail'],
+      [k.invoicesPending, t('k.invoicesPending'), '#/billing', 'amber', 'invoice'], [extra.low, t('stk.kLow'), '#/inventory', 'amber', 'inventory'],
+    ].filter((a) => a[0] > 0);
+    el.querySelector('[data-attn]').innerHTML = alerts.length
+      ? alerts.map(([n, label, link, tone, ic]) => `<a class="al ${tone}" href="${link}"><span class="ic">${icon(ic).s}</span><span class="n">${esc(n)}</span><span class="t">${esc(label)}</span></a>`).join('')
+      : `<div class="al ok"><span class="ic">${icon('check').s}</span><span class="t">${esc(t('dash.allClear'))}</span></div>`;
     const h = ` ${t('p.bh')}`;
     const perf = (label, v) => `<a href="#/reports" tabindex="-1"><span class="t">${esc(t(label))}</span><span class="strong">${v instanceof Object ? v.s ?? v : esc(v)}</span></a>`;
     el.querySelector('[data-perf]').innerHTML = [perf('p.avgPrep', num(p.avgPrepHours, h)), perf('p.avgShip', num(p.avgToShipHours, h)), perf('p.avgDelivery', num(p.avgToDeliveryHours, h)),

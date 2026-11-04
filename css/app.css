@@ -408,3 +408,17 @@ table.t tr.click:hover td, table.t tbody tr:hover td { background: #FAFBFC; }
 @media (max-width: 1100px) { .exec-hero { grid-template-columns: repeat(2, minmax(0, 1fr)); } .exec-grid { grid-template-columns: minmax(0, 1fr); } .pipeline { grid-template-columns: repeat(3, minmax(0, 1fr)); } .pipeline a:nth-child(3) { border-right: 0; } .pipeline a:nth-child(-n+3) { border-bottom: 1px solid var(--line); } }
 @media (max-width: 860px) { .page-head { flex-wrap: wrap; } .content { padding: 18px 16px 48px; } }
 @media (max-width: 520px) { .exec-hero { grid-template-columns: minmax(0, 1fr); } .pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Dashboard v2.1: alerts first, stages that never cut their labels */
+.alert-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.alert-strip .al { display: flex; align-items: center; gap: 10px; padding: 11px 14px; background: #fff; border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 10px; text-decoration: none; color: var(--ink); min-width: 0; transition: box-shadow .15s, border-color .15s; }
+.alert-strip a.al:hover { box-shadow: 0 2px 10px rgba(16,24,40,.07); }
+.alert-strip .al.red { border-left-color: var(--red); } .alert-strip .al.amber { border-left-color: #D69E2E; } .alert-strip .al.ok { border-left-color: var(--green); grid-column: 1 / -1; }
+.alert-strip .ic { width: 30px; height: 30px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; background: var(--line-2); color: var(--ink-2); }
+.alert-strip .red .ic { background: var(--red-soft); color: var(--red); } .alert-strip .amber .ic { background: var(--amber-soft); color: var(--amber); } .alert-strip .ok .ic { background: var(--green-soft); color: var(--green); }
+.alert-strip .ic svg { width: 16px; height: 16px; }
+.alert-strip .n { font-family: var(--font-head); font-weight: 700; font-size: 18px; color: var(--menu); }
+.alert-strip .t { font-size: 12.5px; color: var(--ink-2); line-height: 1.25; min-width: 0; }
+.pipeline a { padding: 14px 12px 12px; min-width: 0; }
+.pipeline .l { font-size: 11px; letter-spacing: .2px; text-transform: none; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; min-height: 28px; }
+@media (max-width: 1280px) { .pipeline { grid-template-columns: repeat(3, minmax(0, 1fr)); } .pipeline a:nth-child(3) { border-right: 0; } .pipeline a:nth-child(-n+3) { border-bottom: 1px solid var(--line); } }
