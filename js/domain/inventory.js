@@ -2,6 +2,7 @@ import { rid } from './common.js';
 import { AppError, logEvent, getRequest, once } from './common.js';
 import { norm } from './sheet-parse.js';
 import { FINAL_STATUSES } from './catalog.js';
+import * as stock from './stock.js';
 
 function reservedFor(d, itemId) {
   return d.reservations.filter((r) => r.itemId === itemId && r.state === 'ACTIVE').reduce((s, r) => s + r.qty, 0);
@@ -18,6 +19,13 @@ function listItems(d) { return Object.values(d.inventory).filter((it) => !(sheet
 
 // Catalog items that can fulfil a requested line (model + color, preferring the sample type).
 function candidates(d, line) {
+  if (stock.platformMode(d)) {
+    const lt = new Set(norm(`${line.model} ${line.color}`).split(/[^A-Z0-9ÁÉÍÓÚÑ]+/).filter(Boolean));
+    const want = stock.kindOf(line.pieceSize);
+    return (d.physicalInventory || []).filter((r) => r.active !== false && (r.ref === line.ref || (norm(r.model).split(/[^A-Z0-9ÁÉÍÓÚÑ]+/).filter(Boolean).every((t) => lt.has(t)) && (!want || stock.rowKind(r) === want))))
+      .map((r) => ({ itemId: r.ref, sku: '', model: r.model, color: r.color, format: r.sampleSize, sampleType: stock.rowKind(r), location: stock.rowLabel(r), onHand: r.quantity || 0, reserved: 0, available: r.quantity || 0, preferred: r.ref === line.ref }))
+      .sort((a, b) => Number(b.preferred) - Number(a.preferred) || b.onHand - a.onHand);
+  }
   const wantCut = /cut/i.test(line.pieceSize || '');
   return listItems(d)
     .filter((it) => norm(it.model) === norm(line.model) && norm(it.color) === norm(line.color))
@@ -107,6 +115,10 @@ function activeAuto(d) {
 }
 // Deductions in force: the base's (before the switch) and the platform's, minus what was given back.
 function activeDeductions(d) {
+  if (stock.platformMode(d)) { // the base's deductions frozen at the switch + the platform's own
+    const ids = new Set((d.meta || {}).baseMoves || []); const returned = returnedIds(d);
+    return d.movements.filter((m) => ((m.source === 'BASE' && (!ids.size || ids.has(m.id))) || m.source === 'AUTO') && m.type === 'ISSUE' && !returned.has(m.id));
+  }
   if (sheetsMode(d)) { const ids = new Set((d.meta || {}).baseMoves || []); return d.movements.filter((m) => m.source === 'BASE' && ids.has(m.id)); }
   const returned = returnedIds(d);
   return d.movements.filter((m) => (m.source === 'AUTO' || m.source === 'BASE') && m.type === 'ISSUE' && !returned.has(m.id));
@@ -147,7 +159,7 @@ const sameProduct = (a, b) => { const x = norm(a), y = norm(b); return Boolean(x
 function physicalAt(d, location, model) {
   if (!Array.isArray(d.physicalInventory)) return null;
   const ref = norm(location);
-  if (ref && !parseLoc(location)) return d.physicalInventory.find((x) => x.reference && norm(x.reference) === ref) || null; // official layout: HOUSTON2-001
+  if (ref && !parseLoc(location)) return d.physicalInventory.find((x) => (x.ref && norm(x.ref) === ref) || (x.reference && norm(x.reference) === ref)) || null; // official layout: HOUSTON2-001
   const p = parseLoc(location);
   if (!p) return null;
   const rows = d.physicalInventory.filter((x) => locKey(x.cabinet, x.position) === locKey(p.cabinet, p.position));
@@ -158,6 +170,7 @@ function touchPhysical(d, item, delta) {
   if (row && typeof row.quantity === 'number') { d.physicalInventory = d.physicalInventory.map((x) => (x === row ? { ...x, quantity: Math.max(0, x.quantity + delta) } : x)); }
 }
 function pendingInventory(d) {
+  if (stock.platformMode(d)) return pendingPlatform(d);
   if (sheetsMode(d)) return { deduct: [], giveBack: [] };
   const c = cutover(d);
   const act = activeAuto(d);
@@ -176,7 +189,29 @@ function pendingInventory(d) {
   }
   return out;
 }
+function pendingPlatform(d) {
+  const from = (d.settings || {}).platformFrom || '';
+  const act = activeAuto(d);
+  const out = { deduct: [], giveBack: [] };
+  for (const req of Object.values(d.requests)) {
+    const mine = act.filter((m) => m.requestNo === req.requestNo);
+    if (req.status === 'CANCELLED' || req.inventoryExcluded) { if (mine.length) out.giveBack.push(req.requestNo); continue; }
+    if (req.source !== 'FORM' && !(String(req.createdAt || '') >= from)) continue; // older requests were deducted by the base
+    for (const line of req.lines || []) {
+      if (!(line.pieces > 0) || (req.excludedLines || []).includes(line.line) || mine.some((m) => m.line === line.line)) continue;
+      const row = line.ref ? stock.rowByRef(d, line.ref) : stock.matchRow(d, line, line.pieces);
+      if (row && (row.quantity || 0) > 0) out.deduct.push({ requestNo: req.requestNo, line, row });
+    }
+  }
+  return out;
+}
 function returnMove(d, m, why, at) {
+  if (m.rowRef) {
+    const r = stock.returnToRow(d, m);
+    d.movements.push({ id: `MOV-RET-${m.id.replace(/^MOV-/, '')}`, ref: m.id, at, type: 'RETURN', source: 'AUTO', rowRef: m.rowRef, itemId: null, qty: m.qty, requestNo: m.requestNo, line: m.line, area: 'SYSTEM',
+      model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, before: r ? r.before : null, after: r ? r.after : null, note: why });
+    return;
+  }
   const it = d.inventory[m.itemId];
   const before = it ? it.onHand : null;
   if (it) it.onHand += m.qty;
@@ -190,6 +225,7 @@ function giveBack(d, requestNo, why, at = new Date().toISOString()) {
   logEvent(d, { requestNo, event: `Inventory returned (${why})`, area: 'SYSTEM', at });
 }
 function deductLine(d, requestNo, line, at) {
+  if (stock.platformMode(d)) { const row = line.ref ? stock.rowByRef(d, line.ref) : stock.matchRow(d, line, line.pieces); return row ? Boolean(stock.deductRow(d, requestNo, line, row, at)) : false; }
   const pick = candidates(d, line).filter((i) => i.onHand > 0).sort((a, b) => Number(b.preferred) - Number(a.preferred) || Number(b.onHand >= line.pieces) - Number(a.onHand >= line.pieces) || b.onHand - a.onHand)[0];
   if (!pick) return false;
   const it = d.inventory[pick.itemId];
@@ -209,11 +245,11 @@ function reconcileInventory(d) {
   const at = new Date().toISOString();
   for (const no of back) giveBack(d, no, d.requests[no].inventoryExcluded ? 'Request excluded from inventory' : 'Request cancelled', at);
   const touched = new Set();
-  for (const { requestNo, line } of deduct) if (deductLine(d, requestNo, line, at)) touched.add(requestNo);
+  for (const { requestNo, line, row } of deduct) if (row ? stock.deductRow(d, requestNo, line, stock.rowByRef(d, row.ref), at) : deductLine(d, requestNo, line, at)) touched.add(requestNo);
   for (const no of touched) logEvent(d, { requestNo: no, event: 'Inventory deducted automatically on request arrival', area: 'SYSTEM', at });
   return { deducted: deduct.length, returned: back.length };
 }
-const needsReconcile = (d) => { if (sheetsMode(d)) return false; if (!cutover(d)) return true; const p = pendingInventory(d); return p.deduct.length + p.giveBack.length > 0; };
+const needsReconcile = (d) => { if (stock.platformMode(d)) { const p = pendingInventory(d); return p.deduct.length + p.giveBack.length > 0; } if (sheetsMode(d)) return false; if (!cutover(d)) return true; const p = pendingInventory(d); return p.deduct.length + p.giveBack.length > 0; };
 
 // CESANTONI: stock received or counted. Records the difference as a movement (never deletes history).
 function adjustStock(d, { itemId, newQty, reason }, area) {

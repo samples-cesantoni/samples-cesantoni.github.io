@@ -79,7 +79,9 @@ function applySourceSnapshot(d, { requests = [], tracking = [], operation = [], 
   // the base quantity that is not explained by the base's own request deductions. Items are never deleted.
   // The official Houston layout of the base (inventory keyed by REFERENCIA, deductions recalculated there) makes the
   // base the inventory authority again: the platform mirrors it and does not deduct by itself.
-  if (catalog.official && (d.settings || {}).inventorySource !== 'SHEETS') d.settings = { ...(d.settings || {}), inventorySource: 'SHEETS' };
+  // Once the platform keeps the inventory (PLATFORM), the base's inventory and deductions are ignored entirely.
+  if ((d.settings || {}).inventorySource === 'PLATFORM') { catalog = { items: [], physical: [] }; moves = []; }
+  if (catalog.official && !['SHEETS', 'PLATFORM'].includes((d.settings || {}).inventorySource)) d.settings = { ...(d.settings || {}), inventorySource: 'SHEETS' };
   const sheets = (d.settings || {}).inventorySource === 'SHEETS';
   const from = !sheets && d.settings && d.settings.inventoryFrom;
   const createdNow = new Set();

@@ -290,14 +290,17 @@ function sincronizar() {
       hashes[r.requestNo] = h;
     });
     // Inventario: la base manda (descuenta por folio). Nunca se borra un artículo.
+    // Si la plataforma ya lleva el inventario (PLATFORM), de la base solo se toman solicitudes, estatus y guías.
+    var ajP = fsGet('sc_config', 'ajustes');
+    if (ajP && ajP.inventorySource === 'PLATFORM') { cat = { items: [], fisico: [] }; movimientos = []; }
     var hc = sha1(JSON.stringify(cat));
     // Desde ajustes.inventoryFrom la plataforma lleva las existencias: de la base solo se toman artículos nuevos.
     // Los cambios MANUALES hechos en la base (entradas, conteos, mermas) sí se aplican: la diferencia de la existencia
     // de la base que no se explica por sus propios descuentos de folios.
     // Con la estructura oficial Houston (inventario por REFERENCIA, descuentos recalculados en la base) la base vuelve a llevar
     // el inventario: la plataforma la copia tal cual y no descuenta por su cuenta.
-    var aj0 = fsGet('sc_config', 'ajustes'), hojas = cat.oficial || (aj0 && aj0.inventorySource === 'SHEETS');
-    if (cat.oficial && !(aj0 && aj0.inventorySource === 'SHEETS')) { var na0 = aj0 ? JSON.parse(JSON.stringify(aj0)) : {}; na0.inventorySource = 'SHEETS'; if (aj0) fsReplace('sc_config', 'ajustes', na0, aj0); else fsCreate('sc_config', 'ajustes', na0); }
+    var aj0 = ajP, hojas = cat.oficial || (aj0 && aj0.inventorySource === 'SHEETS');
+    if (cat.oficial && !(aj0 && (aj0.inventorySource === 'SHEETS' || aj0.inventorySource === 'PLATFORM'))) { var na0 = aj0 ? JSON.parse(JSON.stringify(aj0)) : {}; na0.inventorySource = 'SHEETS'; if (aj0) fsReplace('sc_config', 'ajustes', na0, aj0); else fsCreate('sc_config', 'ajustes', na0); }
     var desde = !hojas && aj0 && aj0.inventoryFrom, nuevos = {};
     if (meta.catalogo !== hc) {
       var actuales = {}, invL = fsList('sc_inventario'); invL.forEach(function (x) { actuales[x.__id] = x; });
@@ -372,7 +375,7 @@ function moverFisico(it, delta) {
 }
 function descontarInventario() {
   var res = { descontados: 0, regresados: 0 }, aj = fsGet('sc_config', 'ajustes'), desde = aj && aj.inventoryFrom, ahora = new Date().toISOString();
-  if (aj && aj.inventorySource === 'SHEETS') return res; // la base lleva el inventario
+  if (aj && (aj.inventorySource === 'SHEETS' || aj.inventorySource === 'PLATFORM')) return res; // la base, o la sesión de CESANTONI, lleva el inventario
   if (!desde) { var na = aj ? JSON.parse(JSON.stringify(aj)) : {}; na.inventoryFrom = ahora; if (aj) fsReplace('sc_config', 'ajustes', na, aj); else fsCreate('sc_config', 'ajustes', na); return res; }
   var movs = fsList('sc_movimientos'), devueltos = {};
   movs.forEach(function (m) { if (m.type === 'RETURN' && m.source === 'AUTO') devueltos[m.ref] = true; });
