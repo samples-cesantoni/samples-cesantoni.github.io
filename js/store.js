@@ -29,15 +29,16 @@ export const SPEC = [
   { key: 'invoices', col: 'facturas', ces: true },
   { key: 'syncLog', col: 'sync', ces: true },
   { key: 'sheetOutbox', col: 'salida', ces: true },
+  { key: 'intake', col: 'pedidos', map: true, ces: true, flag: 'nuevo' }, // solicitudes del formulario público, antes de volverse folio
 ];
-const SINGLES = [{ key: 'settings', id: 'ajustes' }, { key: 'physicalInventory', id: 'fisico', field: 'rows' }, { key: 'meta', id: 'meta' }];
+const SINGLES = [{ key: 'settings', id: 'ajustes' }, { key: 'physicalInventory', id: 'fisico', field: 'rows' }, { key: 'meta', id: 'meta' }, { key: 'publicCatalog', id: 'catalogo' }];
 const CHUNK = 700000;
 const OVERLAP = 10 * 60 * 1000; // margen por diferencias de reloj entre equipos
 
 export const empty = () => ({
   meta: { lastSync: null, source: null }, requests: {}, inventory: {}, physicalInventory: [], reservations: [], movements: [], evidence: [],
   files: {}, shipments: {}, statusHistory: [], events: [], emails: [], notices: [], invoices: [], shippingCosts: {}, duplicateDecisions: {},
-  operations: {}, sheetOutbox: [], syncLog: [], settings: null,
+  operations: {}, sheetOutbox: [], syncLog: [], settings: null, intake: {}, publicCatalog: null,
 });
 const clone = (x) => JSON.parse(JSON.stringify(x === undefined ? null : x));
 const docId = (id) => String(id).replace(/\//g, '_');
@@ -59,6 +60,8 @@ export class Store {
       const q = since ? fb.query(this.colRef(s.col), fb.where('_u', '>', since - OVERLAP)) : this.colRef(s.col);
       const snap = await fb.getDocs(q);
       for (const doc of snap.docs) this.absorb(s, doc.id, doc.data());
+      // The public form writes without our timestamps: its new requests are read by their «nuevo» flag.
+      if (s.flag) for (const doc of (await fb.getDocs(fb.query(this.colRef(s.col), fb.where(s.flag, '==', true)))).docs) this.absorb(s, doc.id, doc.data());
       this.since[s.col] = started;
     }));
     if (this.area === 'CESANTONI') {

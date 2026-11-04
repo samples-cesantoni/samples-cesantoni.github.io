@@ -321,12 +321,35 @@ service cloud.firestore {
       return !exists(/databases/$(database)/documents/sc_config/inicio) && existsAfter(/databases/$(database)/documents/sc_config/inicio);
     }
 
+    // Formulario público de solicitudes (samples-cesantoni.github.io/solicitar/): lee el catálogo y el contador de folios,
+    // y crea su solicitud con el folio siguiente en la misma transacción. No puede leer nada más.
+    function scFolioDoc() { return /databases/$(database)/documents/sc_config/folio; }
+    function scFolioId(n) { return n < 10 ? 'SMCES-000' + string(n) : n < 100 ? 'SMCES-00' + string(n) : n < 1000 ? 'SMCES-0' + string(n) : 'SMCES-' + string(n); }
+    function scTexto(v, n) { return v is string && v.size() <= n; }
+    function scPedidoValido() {
+      let p = request.resource.data;
+      return p.keys().hasOnly(['requestNo', 'createdAt', 'customer', 'country', 'state', 'city', 'zip', 'address', 'deliveryRefs', 'notes', 'lines', 'lang', 'nuevo']) && p.nuevo == true &&
+        p.requestNo == scFolioId(get(scFolioDoc()).data.next) && scTexto(p.createdAt, 40) &&
+        p.customer is map && p.customer.keys().hasOnly(['fullName', 'company', 'phone', 'email']) &&
+        scTexto(p.customer.fullName, 120) && p.customer.fullName.size() > 1 && scTexto(p.customer.company, 160) && scTexto(p.customer.phone, 60) &&
+        p.customer.email is string && p.customer.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]{2,}$') && p.customer.email.size() <= 200 &&
+        scTexto(p.country, 80) && scTexto(p.state, 80) && scTexto(p.city, 80) && scTexto(p.zip, 20) && scTexto(p.address, 400) && p.address.size() > 4 &&
+        scTexto(p.deliveryRefs, 400) && scTexto(p.notes, 1000) && p.lines is list && p.lines.size() >= 1 && p.lines.size() <= 40;
+    }
+    match /sc_pedidos/{id} {
+      allow create: if id == scFolioId(get(scFolioDoc()).data.next) && getAfter(scFolioDoc()).data.next == get(scFolioDoc()).data.next + 1 &&
+        !exists(/databases/$(database)/documents/sc_solicitudes/$(id)) && scPedidoValido();
+      allow read, update: if scCes();
+    }
+
     match /sc_config/{id} {
-      allow get: if id == 'inicio' || scStaff();
+      allow get: if id == 'inicio' || id == 'catalogo' || id == 'folio' || scStaff();
       allow list: if scStaff();
       allow create: if (id == 'inicio' && signedIn() && scInicioNuevo() &&
           getAfter(/databases/$(database)/documents/sc_admins/$(request.auth.uid)).data.rol == 'admin') || (id != 'inicio' && scCes());
-      allow update: if id != 'inicio' && scCes();
+      allow update: if (id != 'inicio' && scCes()) ||
+        (id == 'folio' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['next']) && request.resource.data.next == resource.data.next + 1 &&
+         existsAfter(/databases/$(database)/documents/sc_pedidos/$(scFolioId(resource.data.next))));
     }
     match /sc_admins/{uid} {
       allow read: if scAdmin() || isOwner(uid);

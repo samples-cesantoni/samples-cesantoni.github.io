@@ -49,6 +49,20 @@ Igual que proveedores y movimientos:
 En pantallas, PDF, Excel, etiquetas y correos solo aparece el área (CESANTONI / Warehouse / System), nunca el nombre de una persona.
 El registro técnico de quién hizo qué se guarda en `sc_seguridad`, que solo leen los administradores desde la consola.
 
+## Formulario de clientes e inventario en la plataforma (sin Sheets)
+
+- **Formulario para clientes:** https://samples-cesantoni.github.io/solicitar/ (público, en inglés, sin contraseña). Muestra solo los productos activos
+  con existencia, y al enviar el cliente recibe su folio al instante (contador `sc_config/folio`, siempre por delante del folio más alto).
+  La solicitud llega a `sc_pedidos` y se vuelve folio en la plataforma: lo hace la primera sesión de CESANTONI o el Apps Script (`sincronizar`,
+  cada 15 min), lo que ocurra primero. Se descuenta en ese momento de la fila exacta que eligió el cliente.
+- **Inventario en la plataforma:** *Inventario › Pasar el inventario a la plataforma* (una vez). Desde ahí Sheets ya no cambia existencias.
+  - *Actualizar desde Excel*: sube el inventario (MODELO, COLOR, ACABADO, TAMAÑO DE MUESTRA, INVENTARIO; opcionales REFERENCIA, MUEBLE, POSICIÓN,
+    20X20 CUT, STANDARD, ACTIVO); ves nuevos, cambios y faltantes antes de aplicar. Las existencias quedan como en el Excel.
+  - *Descargar Excel*: el inventario actual con las mismas columnas, para editarlo y volverlo a subir.
+  - *Agregar producto* / clic en un renglón: editar modelo, color, acabado, tamaño, tipo, ubicación, existencia (con motivo) y si está activo.
+  - Cada cambio queda en *Movimientos*. El formulario de clientes se actualiza solo.
+- Las reglas de Firestore incluyen el bloque del formulario público (`sc_pedidos`, `sc_config/catalogo` y `sc_config/folio`): hay que publicarlas.
+
 ## Inventario oficial en la base (estructura Houston)
 
 Si la hoja *PRODUCTS* de la base trae el bloque **INVENTARIO OFICIAL** (inventario por REFERENCIA «HOUSTON2-001», con FILA EXCEL, ACABADO,

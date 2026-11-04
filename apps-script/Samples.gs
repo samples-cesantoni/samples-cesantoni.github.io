@@ -226,6 +226,8 @@ function nuevoEvento(no, texto, at) { var e = rid('EVT'); fsCreate('sc_eventos',
 function sincronizar() {
   var lock = LockService.getScriptLock(); if (!lock.tryLock(30000)) return;
   try {
+    try { pedidosPlataforma(); } catch (e) { console.error('Formulario de la plataforma: ' + e.message); } // no depende de Sheets
+    if (!CONFIG.FUENTE_ID) return 'sin base';
     var ss = SpreadsheetApp.openById(CONFIG.FUENTE_ID);
     var hoja = function (n, opcional) { var sh = ss.getSheetByName(n); if (!sh) { if (opcional) return null; throw new Error('No existe la hoja ' + n); } return sh.getDataRange().getValues(); };
     var solicitudes = leerSolicitudes(hoja('REQUESTS')), seguimiento = leerSeguimiento(hoja('TRACKING')), cat = { items: [], fisico: [] };
@@ -410,6 +412,51 @@ function descontarInventario() {
     });
     if (hubo) nuevoEvento(no, 'Inventory deducted automatically on request arrival', ahora);
   });
+  return res;
+}
+
+/* ------------------------------------------------------------------ formulario de clientes de la plataforma */
+// Igual que js/domain/intake.js + stock.js: cada solicitud del formulario (sc_pedidos, «nuevo») se vuelve folio y, si la
+// plataforma lleva el inventario (PLATFORM), se descuenta de la fila exacta que eligió el cliente. Mismos ids que la
+// plataforma: si una sesión de CESANTONI lo hizo antes, aquí no se repite.
+var TIPO_PIEZA = { CUT: '8×8 in Cut Sample', FULL: 'Full Piece', MESH: 'Mesh' };
+function tipoFila(r) { return r.cut20 ? 'CUT' : r.fullPiece ? 'FULL' : (/MESH|MALLA/i.test(r.sampleSize || '') ? 'MESH' : (/STANDARD|FULL|COMPLETA/i.test(r.sampleSize || '') ? 'FULL' : 'CUT')); }
+function etiquetaFila(r) { return r.cabinet && r.position ? 'Mueble ' + r.cabinet + ' · Pos. ' + r.position : (r.ref || r.reference || ''); }
+function pedidosPlataforma() {
+  var res = { folios: 0, descuentos: 0 };
+  var nuevos = fsList('sc_pedidos').filter(function (p) { return p.nuevo === true; });
+  if (!nuevos.length) return res;
+  var aj = fsGet('sc_config', 'ajustes') || {}, plataforma = aj.inventorySource === 'PLATFORM', ahora = new Date().toISOString();
+  nuevos.forEach(function (p) {
+    var no = p.requestNo || p.__id, c = p.customer || {}, s = function (v, n) { return String(v === null || v === undefined ? '' : v).trim().slice(0, n || 300); };
+    var lineas = (p.lines || []).slice(0, 40).map(function (l, i) { return { line: i + 1, model: s(l.model, 80), color: s(l.color, 60), finish: s(l.finish, 60), pieceSize: [TIPO_PIEZA[l.kind] || '', s(l.size, 60)].filter(Boolean).join(' · '), pieces: Math.max(1, Math.min(20, Number(l.pieces) || 1)), sku: '', ref: s(l.ref, 80) }; });
+    var creado = s(p.createdAt, 40) || ahora;
+    var doc = { requestNo: no, requestId: no, createdAt: creado, source: 'FORM', customer: { fullName: s(c.fullName), company: s(c.company), phone: s(c.phone, 60) },
+      country: s(p.country, 80), state: s(p.state, 80), city: s(p.city, 80), zip: s(p.zip, 20), address: s(p.address, 400), deliveryRefs: s(p.deliveryRefs, 400), lines: lineas,
+      status: 'RECEIVED', sourceStatus: 'RECEIVED', deliveryMode: null, statusDates: { RECEIVED: creado }, statusChangedAt: creado, observations: [], sourceNotes: s(p.notes, 1000), syncedAt: ahora };
+    if (fsCreate('sc_solicitudes', no, doc)) {
+      fsCreate('sc_contactos', no, { email: s(c.email, 200).toLowerCase() });
+      var hid = rid('STH'); fsCreate('sc_historial', hid, { id: hid, requestNo: no, from: null, to: 'RECEIVED', at: creado, area: 'SYSTEM', notes: 'Received from the platform request form', exception: null });
+      nuevoEvento(no, 'Request received (platform form)', creado); res.folios++;
+      if (plataforma) lineas.forEach(function (l) {
+        if (!l.ref) return;
+        var id = 'MOV-AUTO-' + no + '-L' + l.line + '-1', f = fsGet('sc_config', 'fisico'); if (!f || !f.rows) return;
+        var n = JSON.parse(JSON.stringify(f)), fila = null;
+        n.rows.forEach(function (r) { if (r.ref === l.ref) fila = r; });
+        if (!fila || !(fila.quantity > 0)) return;
+        var qty = Math.min(l.pieces, fila.quantity), antes = fila.quantity;
+        if (!fsCreate('sc_movimientos', id, { id: id, at: ahora, type: 'ISSUE', source: 'AUTO', rowRef: fila.ref, itemId: null, qty: qty, requestNo: no, line: l.line, area: 'SYSTEM', model: fila.model, color: fila.color || '', sampleType: fila.sampleSize || '', location: etiquetaFila(fila), before: antes, after: antes - qty, note: qty < l.pieces ? 'Deducted on arrival — only ' + qty + ' of ' + l.pieces + ' in stock' : 'Deducted on arrival' })) return;
+        fila.quantity = antes - qty; fsReplace('sc_config', 'fisico', n, f); res.descuentos++;
+      });
+    }
+    var pr = fsGet('sc_pedidos', p.__id); if (pr) { var np = JSON.parse(JSON.stringify(pr)); np.nuevo = false; np.converted = true; np.convertedAt = ahora; fsReplace('sc_pedidos', p.__id, np, pr); }
+  });
+  if (plataforma && res.descuentos) { // el formulario solo ofrece lo que tiene existencia
+    var f2 = fsGet('sc_config', 'fisico'), cat = fsGet('sc_config', 'catalogo');
+    var items = (f2.rows || []).filter(function (r) { return r.active !== false && r.ref; }).map(function (r) { return { ref: r.ref, model: r.model, color: r.color || '', finish: r.finish || '', size: r.sampleSize || '', kind: tipoFila(r), available: (r.quantity || 0) > 0 }; })
+      .sort(function (a, b) { return a.model.localeCompare(b.model) || a.color.localeCompare(b.color) || a.size.localeCompare(b.size); });
+    fsReplace('sc_config', 'catalogo', { items: items, updatedAt: ahora }, cat);
+  }
   return res;
 }
 

@@ -8,6 +8,8 @@ import { AppError, logEvent, getRequest } from './domain/common.js';
 import * as C from './domain/catalog.js';
 import * as views from './domain/views.js';
 import * as inventory from './domain/inventory.js';
+import * as stock from './domain/stock.js';
+import * as intake from './domain/intake.js';
 import * as evidence from './domain/evidence.js';
 import * as status from './domain/status.js';
 import * as notices from './domain/notices.js';
@@ -219,27 +221,50 @@ async function importWorkbook(form) {
   return store.mutate((d) => applySourceSnapshot(d, snap, `Import: ${form.get('file').name}`), 'IMPORT');
 }
 
-// Inventario inicial (Excel «Inventario inicial - Houston»): MODELO, COLOR, ACABADO, TAMAÑO DE MUESTRA, INVENTARIO.
-async function importInitialInventory(form) {
+// Inventario en Excel: MODELO, COLOR, ACABADO, TAMAÑO DE MUESTRA, INVENTARIO (+ opcionales REFERENCIA, MUEBLE, POSICIÓN,
+// 20X20 CUT / MUESTRA / CUT, STANDARD, ACTIVO). Acepta el «Inventario inicial - Houston» y el Excel que descarga la plataforma.
+async function readInventoryExcel(file) {
   const { excel } = await import('./services/exports.js');
   const ExcelJS = await excel();
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(await form.get('file').arrayBuffer());
+  await wb.xlsx.load(await file.arrayBuffer());
   const val = (v) => (v === null || v === undefined ? '' : typeof v === 'object' && !(v instanceof Date) ? ('result' in v ? val(v.result) : v.richText ? v.richText.map((x) => x.text).join('') : v.text || '') : v);
   for (const ws of wb.worksheets) {
     const rows = [];
     ws.eachRow({ includeEmpty: false }, (row) => { const a = []; for (let c = 1; c <= Math.max(ws.columnCount, row.cellCount); c++) a.push(val(row.getCell(c).value)); rows.push(a); });
-    const hi = rows.findIndex((r) => r.some((c) => norm(c) === 'MODELO') && r.some((c) => norm(c) === 'INVENTARIO'));
+    const hi = rows.findIndex((r) => r.some((c) => norm(c) === 'MODELO') && r.some((c) => ['INVENTARIO', 'EXISTENCIA'].includes(norm(c))));
     if (hi < 0) continue;
-    const ix = (name) => rows[hi].findIndex((c) => norm(c) === name);
-    const [m, co, ac, sz, q, cut, full] = ['MODELO', 'COLOR', 'ACABADO', 'TAMAÑO DE MUESTRA', 'INVENTARIO', '20X20 CUT', 'STANDARD'].map(ix);
-    const yes = (v) => /^(SI|SÍ|YES|TRUE|X|1)$/i.test(String(v ?? '').trim());
-    const list = rows.slice(hi + 1).filter((r) => String(r[m] || '').trim() && r[q] !== '' && !isNaN(Number(r[q])))
-      .map((r) => ({ model: String(r[m]).trim(), color: co >= 0 ? String(r[co] || '').trim() : '', finish: ac >= 0 ? String(r[ac] || '').trim() : '', sampleSize: sz >= 0 ? String(r[sz] || '').trim() : '', cut20: cut >= 0 && yes(r[cut]), fullPiece: full >= 0 && yes(r[full]), qty: Math.max(0, Math.round(Number(r[q]))) }));
-    if (!list.length) break;
-    return store.mutate((d) => inventory.applyInitialInventory(d, list, form.get('file').name), 'INVENTORY_INITIAL');
+    const ix = (...names) => rows[hi].findIndex((c) => names.includes(norm(c)));
+    const c = { m: ix('MODELO'), co: ix('COLOR'), ac: ix('ACABADO'), sz: ix('TAMAÑO DE MUESTRA', 'TAMAÑO'), q: ix('INVENTARIO', 'EXISTENCIA'), cut: ix('20X20 CUT', 'MUESTRA / CUT', 'CORTE 20×20', 'CORTE'),
+      full: ix('STANDARD', 'PIEZA COMPLETA'), ref: ix('REFERENCIA'), cab: ix('MUEBLE'), pos: ix('POSICIÓN', 'POSICION'), act: ix('ACTIVO') };
+    const yes = (v) => v === true || /^(SI|SÍ|YES|TRUE|X|1)$/i.test(String(v ?? '').trim());
+    const no = (v) => v === false || /^(NO|FALSE|0)$/i.test(String(v ?? '').trim());
+    const g = (r, k) => (c[k] >= 0 ? String(r[c[k]] ?? '').trim() : '');
+    const list = rows.slice(hi + 1).filter((r) => g(r, 'm') && r[c.q] !== '' && !isNaN(Number(r[c.q]))).map((r) => ({
+      model: g(r, 'm').toUpperCase(), color: /^\d+(\.\d+)?$/.test(g(r, 'co')) ? '' : g(r, 'co').toUpperCase(), finish: g(r, 'ac').toUpperCase(), sampleSize: g(r, 'sz'),
+      cut20: c.cut >= 0 && yes(r[c.cut]), fullPiece: c.full >= 0 && yes(r[c.full]), ref: g(r, 'ref'), cabinet: g(r, 'cab').toUpperCase(), position: g(r, 'pos'),
+      active: !(c.act >= 0 && no(r[c.act])), qty: Math.max(0, Math.round(Number(r[c.q]))),
+    }));
+    if (list.length) return list;
   }
-  throw new AppError(400, 'INITIAL_NOT_FOUND', 'No sheet with the columns MODELO and INVENTARIO was found');
+  throw new AppError(400, 'INVENTORY_NOT_FOUND', 'No encontré una hoja con las columnas MODELO e INVENTARIO');
+}
+async function importInitialInventory(form) {
+  const list = await readInventoryExcel(form.get('file'));
+  return store.mutate((d) => inventory.applyInitialInventory(d, list, form.get('file').name), 'INVENTORY_INITIAL');
+}
+
+// Contador de folios del formulario público: siempre por delante del folio más alto que ya existe.
+let folioChecked = { want: 0, at: 0 };
+async function ensureFolio() {
+  const ref = store.ref('config', 'folio');
+  const want = intake.maxFolio(store.d) + 1;
+  if (folioChecked.want === want && Date.now() - folioChecked.at < 5 * 60e3) return;
+  folioChecked = { want, at: Date.now() };
+  await fb.runTransaction(store.db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists() || !(snap.data().next >= want)) tx.set(ref, { next: want });
+  }).catch(() => null);
 }
 
 // ---------------------------------------------------------------- usuarios por área
@@ -342,6 +367,17 @@ on('GET', '/inventory', (q) => {
   const locations = [...new Set(Object.values(store.d.inventory).map((i) => (i.location || '').split('·')[0].trim()).filter(Boolean))].sort();
   return { items, physical, locations, sheets: inventory.sheetsMode(store.d) };
 });
+// Inventario de la plataforma (filas por ubicación / referencia).
+on('GET', '/stock', () => {
+  const d = store.d;
+  const rows = (d.physicalInventory || []).map((r) => ({ ...r, kind: stock.rowKind(r), label: stock.rowLabel(r), color: /^\d+(\.\d+)?$/.test(String(r.color || '')) ? '' : r.color }));
+  const act = rows.filter((r) => r.active !== false);
+  return { mode: (d.settings || {}).inventorySource || 'BASE', rows, kpis: { products: act.length, units: act.reduce((a, r) => a + (r.quantity || 0), 0), out: act.filter((r) => !(r.quantity > 0)).length, low: act.filter((r) => r.quantity > 0 && r.quantity < 5).length } };
+});
+on('POST', '/stock/excel/preview', async (q, b, p, form) => { const list = await readInventoryExcel(form.get('file')); return stock.diffExcel(JSON.parse(JSON.stringify(store.d)), list); }, ces);
+on('POST', '/stock/excel/apply', async (q, b, p, form) => { const list = await readInventoryExcel(form.get('file')); return store.mutate((d) => stock.applyExcel(d, list, { name: form.get('file').name, deactivateMissing: form.get('deactivate') === '1' }, store.area), 'STOCK_EXCEL'); }, ces);
+on('POST', '/stock/rows', (q, b) => store.mutate((d) => stock.saveRow(d, b, store.area), 'STOCK_ROW'), ces);
+on('POST', '/stock/platform', () => store.mutate((d) => { stock.startPlatform(d); return { mode: d.settings.inventorySource }; }, 'STOCK_PLATFORM'), ces);
 on('GET', '/inventory/movements', (q) => ({
   movements: store.d.movements.filter((m) => !q.itemId || m.itemId === q.itemId).slice().sort((x, y) => String(x.at).localeCompare(String(y.at))).slice(-300).reverse()
     .map((m) => ({ ...m, area: m.area === 'BODEGA' ? 'Warehouse' : m.area, item: store.d.inventory[m.itemId] ? `${store.d.inventory[m.itemId].model} · ${store.d.inventory[m.itemId].color}` : [m.model, m.color].filter(Boolean).join(' · ') || m.itemId })),
@@ -473,6 +509,15 @@ export async function handle(method, path, { body, form } = {}) {
   try {
     await store.refresh(method !== 'GET');
     // The platform keeps the inventory: deduct new requests on arrival, give back cancelled / excluded ones.
+    if (store.area === 'CESANTONI') {
+      // Requests from the public form become folios; the form's counter stays ahead; the form's catalog follows the inventory.
+      if (intake.pendingIntake(store.d).length) await store.mutate((d) => intake.convertIntake(d), 'INTAKE').catch(() => null);
+      if (stock.platformMode(store.d)) {
+        await ensureFolio();
+        const items = stock.publicCatalog(store.d);
+        if (JSON.stringify(items) !== JSON.stringify((store.d.publicCatalog || {}).items)) await store.mutate((d) => { d.publicCatalog = { items, updatedAt: new Date().toISOString() }; }, 'PUBLIC_CATALOG').catch(() => null);
+      }
+    }
     if (store.area === 'CESANTONI' && inventory.needsReconcile(store.d)) await store.mutate((d) => inventory.reconcileInventory(d), 'INVENTORY_AUTO').catch(() => null);
     // Automatic status changes (Warehouse tracking + label, UPS): the customer email goes out automatically.
     if (store.area === 'CESANTONI' && status.pendingAuto(store.d).length) {

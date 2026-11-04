@@ -4,7 +4,7 @@ import { html, raw, icon, esc, fmtDate, statusBadge, docProgress, modeLabel, opt
 
 export async function render(el, ctx) {
   const f = { q: '', status: '', light: '', mode: '', country: '', state: '', from: '', to: '', active: '', ...ctx.query };
-  el.innerHTML = html`<div class="page-head"><div><h1>${t('req.title')}</h1><p>${t('req.sub')}</p></div></div>
+  el.innerHTML = html`<div class="page-head"><div><h1>${t('req.title')}</h1><p>${t('req.sub')}</p></div><div class="actions"><a class="btn btn-ghost" href="solicitar/" target="_blank" rel="noopener">${icon('link')}${t('req.formLink')}</a></div></div>
   <div class="card"><form class="filters" data-f>
     <label class="field search"><span>${t('common.search')}</span><input class="input" name="q" value="${f.q}" placeholder="${t('req.searchPh')}"></label>
     <label class="field"><span>${t('common.status')}</span><select class="input" name="status">${options(ctx.meta.statuses.map((s) => ({ value: s, label: t('st.' + s) })), f.status, { all: t('common.all') })}</select></label>
