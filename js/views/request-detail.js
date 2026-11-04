@@ -13,6 +13,8 @@ export async function render(el, ctx) {
   let tab = TABS.includes(ctx.query.tab) ? ctx.query.tab : 'general';
   const area = ctx.session.area;
   let det;
+  // The warehouse works each request on its own single page (no tabs); the QR inventory link keeps this view.
+  if (area === 'BODEGA' && ctx.query.tab !== 'inventory') { ctx.navigate(`capture?request=${encodeURIComponent(no)}`); return; }
 
   const load = async () => { det = await api(`/requests/${encodeURIComponent(no)}`); };
   const setTab = (x) => { tab = x; history.replaceState(null, '', `#/requests/${encodeURIComponent(no)}?tab=${x}`); draw(); };

@@ -3,7 +3,7 @@
 const D = {
   // shell & nav
   'nav.operation': ['Operation', 'Operación'], 'nav.control': ['Control', 'Control'], 'nav.finance': ['Finance & analytics', 'Finanzas y análisis'], 'nav.admin': ['Administration', 'Administración'],
-  'nav.dashboard': ['Dashboard', 'Dashboard'], 'nav.requests': ['Requests', 'Solicitudes'], 'nav.inventory': ['Inventory', 'Inventario'], 'nav.capture': ['Quick capture', 'Captura rápida'],
+  'nav.dashboard': ['Dashboard', 'Dashboard'], 'nav.requests': ['Requests', 'Solicitudes'], 'nav.inventory': ['Inventory', 'Inventario'], 'nav.capture': ['My work queue', 'Mis pendientes'],
   'nav.validation': ['Evidence validation', 'Validación de evidencias'], 'nav.status': ['Status change', 'Cambio de estatus'], 'nav.shipments': ['Shipments & tracking', 'Envíos y guías'],
   'nav.labels': ['QR & labels', 'QR y etiquetas'], 'nav.notices': ['Operational notices', 'Avisos operativos'], 'nav.emails': ['Notifications', 'Notificaciones'],
   'nav.alerts': ['Alerts', 'Alertas'], 'nav.duplicates': ['Duplicates', 'Duplicados'], 'nav.billing': ['Monthly billing', 'Facturación mensual'], 'nav.reports': ['Reports', 'Reportes'],
@@ -130,6 +130,19 @@ const D = {
   'res.DELIVERED_OK': ['Delivered in good condition', 'Entregado en buen estado'], 'res.DELIVERED_WITH_ISSUES': ['Delivered with issues', 'Entregado con incidencias'], 'res.NOT_DELIVERED': ['Not delivered', 'No entregado'],
   'sh.estimateNote': ['Estimates are shown as estimates; only a recorded delivery counts as delivered.', 'Las fechas estimadas se muestran como estimadas; solo una entrega registrada cuenta como entregada.'],
   // capture
+  'common.product': ['Product', 'Producto'],
+  'wq.title': ['My work queue', 'Mis pendientes'], 'wq.sub': ['Open requests and the next step of each. Open one and complete its steps on the same page.', 'Folios abiertos y el siguiente paso de cada uno. Abre uno y completa sus pasos en la misma página.'],
+  'wq.searchPh': ['Search request number, customer, city or product…', 'Buscar folio, cliente, ciudad o producto…'], 'wq.empty': ['No open requests. All caught up.', 'No hay folios abiertos. Todo al día.'],
+  'wq.q.ALL': ['All', 'Todos'], 'wq.q.prep': ['To prepare', 'Por preparar'], 'wq.q.pack': ['To pack', 'Por embalar'], 'wq.q.ship': ['To ship', 'Por enviar'], 'wq.q.delivery': ['To deliver', 'Por entregar'], 'wq.q.returned': ['To correct', 'Por corregir'], 'wq.q.done': ['Complete', 'Completos'],
+  'wq.next': ['Next', 'Siguiente'], 'wq.continue': ['Continue', 'Continuar'], 'wq.back': ['All my requests', 'Todos mis pendientes'],
+  'wq.do.prep': ['Prepare the material (photos)', 'Preparar material (fotos)'], 'wq.do.pack': ['Pack (photos)', 'Embalar (fotos)'], 'wq.do.ship': ['Tracking number and label', 'Guía y foto de guía'], 'wq.do.delivery': ['Delivery proof', 'Comprobante de entrega'], 'wq.do.returned': ['Correct returned evidence', 'Corregir evidencia devuelta'], 'wq.do.done': ['Nothing pending', 'Nada pendiente'],
+  'wq.s.material': ['Material to pick', 'Material a surtir'], 'wq.s.prep': ['Preparation', 'Preparación'], 'wq.s.pack': ['Packaging', 'Embalaje'], 'wq.s.ship': ['Shipping: tracking number and label', 'Envío: guía y foto de guía'], 'wq.s.delivery': ['Delivery', 'Entrega'],
+  'wq.st.done': ['Done', 'Listo'], 'wq.st.todo': ['Pending', 'Pendiente'], 'wq.st.returned': ['Returned', 'Devuelto'], 'wq.st.info': ['Check', 'Revisar'],
+  'wq.stepsDone': ['steps done', 'pasos listos'], 'wq.allDone': ['All steps done for this request.', 'Todos los pasos de este folio están listos.'],
+  'wq.qty': ['1. Confirm the pieces', '1. Confirma las piezas'], 'wq.qtyDone': ['Confirmed', 'Confirmadas'], 'wq.qtyBtn': ['Confirm pieces', 'Confirmar piezas'], 'wq.photos': ['2. Preparation photos', '2. Fotos de preparación'],
+  'wq.stepDone': ['Step complete', 'Paso listo'], 'wq.goNext': ['Go to', 'Ir a'], 'wq.trackTitle': ['Tracking number', 'Número de guía'], 'wq.deduct': ['Deduct inventory', 'Descontar inventario'],
+  'wq.upsAuto': ['UPS deliveries are confirmed automatically from the carrier. Upload a proof only if you have one.', 'Las entregas de UPS se confirman solas con la paquetería. Sube comprobante solo si lo tienes.'],
+  'wq.noMode': ['CESANTONI has not defined the delivery mode yet; you can prepare and pack.', 'CESANTONI aún no define la modalidad de entrega; puedes preparar y embalar.'],
   'cap.title': ['Quick capture', 'Captura rápida'], 'cap.sub': ['Warehouse evidence from the phone camera in a few taps.', 'Evidencias de Bodega con la cámara del celular en pocos pasos.'], 'cap.searchPh': ['Request number or customer', 'Folio o cliente'],
   'cap.search': ['Search request', 'Buscar solicitud'], 'cap.material': ['View material', 'Ver material'], 'cap.inventory': ['Check inventory', 'Consultar inventario'], 'cap.prep': ['Capture preparation photo', 'Foto de preparación'],
   'cap.pack': ['Capture packaging photo', 'Foto de embalaje'], 'cap.label': ['Upload tracking label', 'Cargar guía'], 'cap.delivery': ['Upload delivery proof', 'Comprobante de entrega'], 'cap.qr': ['Download QR', 'Descargar QR'], 'cap.save': ['Save evidence', 'Guardar evidencia'],
