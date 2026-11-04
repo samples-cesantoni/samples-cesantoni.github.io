@@ -199,7 +199,8 @@ function pendingPlatform(d) {
     if (req.source !== 'FORM' && !(String(req.createdAt || '') >= from)) continue; // older requests were deducted by the base
     for (const line of req.lines || []) {
       if (!(line.pieces > 0) || (req.excludedLines || []).includes(line.line) || mine.some((m) => m.line === line.line)) continue;
-      const row = line.ref ? stock.rowByRef(d, line.ref) : stock.matchRow(d, line, line.pieces);
+      const ref = line.ref || (req.baseRefs || {})[line.line];
+      const row = ref ? stock.rowByRef(d, ref) : stock.matchRow(d, line, line.pieces);
       if (row && (row.quantity || 0) > 0) out.deduct.push({ requestNo: req.requestNo, line, row });
     }
   }
@@ -359,4 +360,4 @@ function applyInitialInventory(d, rows, name) {
   return { rows: rows.length, matched: pairs.length, unmatched, itemsChanged };
 }
 
-export { listItems, itemView, candidates, lineAllocation, reserve, release, issue, reservedFor, reconcileInventory, needsReconcile, adjustStock, setInventoryExclusion, setLineExclusion, applyInitialInventory, adjustPhysical, physicalAt, sheetsMode, activeAuto, activeDeductions, touchPhysical, cutover as inventoryFrom };
+export { listItems, itemView, candidates, lineAllocation, reserve, release, issue, reservedFor, reconcileInventory, needsReconcile, adjustStock, setInventoryExclusion, setLineExclusion, applyInitialInventory, adjustPhysical, physicalAt, sheetsMode, baseMatches, activeAuto, activeDeductions, touchPhysical, cutover as inventoryFrom };

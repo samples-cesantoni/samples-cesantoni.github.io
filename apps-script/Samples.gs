@@ -294,7 +294,13 @@ function sincronizar() {
     // Inventario: la base manda (descuenta por folio). Nunca se borra un artículo.
     // Si la plataforma ya lleva el inventario (PLATFORM), de la base solo se toman solicitudes, estatus y guías.
     var ajP = fsGet('sc_config', 'ajustes');
-    if (ajP && ajP.inventorySource === 'PLATFORM') { cat = { items: [], fisico: [] }; movimientos = []; }
+    if (ajP && ajP.inventorySource === 'PLATFORM') {
+      // La plataforma lleva el inventario: descuenta las solicitudes (en la fila que eligió la base) y escribe en PRODUCTS
+      // existencias, MOSTRAR y ESTATUS para que el formulario actual se ajuste solo.
+      try { var pb = inventarioPlataforma(movimientos, ajP); res.descuentosPlataforma = pb.descontados; res.regresosPlataforma = pb.regresados; } catch (e) { console.error('Inventario de la plataforma: ' + e.message); }
+      try { res.celdasBase = escribirInventarioBase(ss); } catch (e) { console.error('Escritura en PRODUCTS: ' + e.message); }
+      cat = { items: [], fisico: [] }; movimientos = [];
+    }
     var hc = sha1(JSON.stringify(cat));
     // Desde ajustes.inventoryFrom la plataforma lleva las existencias: de la base solo se toman artículos nuevos.
     // Los cambios MANUALES hechos en la base (entradas, conteos, mermas) sí se aplican: la diferencia de la existencia
@@ -422,6 +428,83 @@ function descontarInventario() {
 var TIPO_PIEZA = { CUT: '8×8 in Cut Sample', FULL: 'Full Piece', MESH: 'Mesh' };
 function tipoFila(r) { return r.cut20 ? 'CUT' : r.fullPiece ? 'FULL' : (/MESH|MALLA/i.test(r.sampleSize || '') ? 'MESH' : (/STANDARD|FULL|COMPLETA/i.test(r.sampleSize || '') ? 'FULL' : 'CUT')); }
 function etiquetaFila(r) { return r.cabinet && r.position ? 'Mueble ' + r.cabinet + ' · Pos. ' + r.position : (r.ref || r.reference || ''); }
+// Descuento de la plataforma (mismo criterio que js/domain/inventory.js · pendingPlatform): cada solicitud creada desde
+// platformFrom (o del formulario de la plataforma) se descuenta línea por línea de la fila exacta: la que eligió el cliente
+// (line.ref), la que eligió la base (MOVIMIENTOS INVENTARIO · REFERENCIA) o la que coincide por modelo, color y tipo.
+// Canceladas o excluidas regresan sus piezas. Ids iguales a los de la plataforma: nunca dos veces.
+function palabras(x) { return norm(x).split(/[^A-Z0-9ÁÉÍÓÚÑ]+/).filter(function (t) { return t && !/^\d+(\.\d+)?$/.test(t); }); }
+function clase(x) { var v = norm(x); return /MESH|MALLA/.test(v) ? 'MESH' : /STANDARD|FULL|COMPLETA/.test(v) ? 'FULL' : /CUT|SAMPLE|CORTE|8×8|8X8|20×20|20X20/.test(v) ? 'CUT' : ''; }
+function coincide(m, linea) {
+  var lt = {}; palabras(linea.model).concat(palabras(linea.color)).forEach(function (t) { lt[t] = true; });
+  var mt = palabras(m.model).concat(palabras(m.color)); if (!mt.length || !mt.every(function (t) { return lt[t]; })) return false;
+  var a = clase(m.sampleType || m.sampleSize), b = clase(linea.pieceSize); return !a || !b || a === b;
+}
+function inventarioPlataforma(movsBase, aj) {
+  var res = { descontados: 0, regresados: 0 }, desde = aj.platformFrom || '', ahora = new Date().toISOString();
+  var movs = fsList('sc_movimientos'), devueltos = {};
+  movs.forEach(function (m) { if (m.type === 'RETURN' && m.ref) devueltos[m.ref] = true; });
+  var activos = movs.filter(function (m) { return m.source === 'AUTO' && m.type === 'ISSUE' && !devueltos[m.__id]; });
+  var f = fsGet('sc_config', 'fisico'); if (!f || !f.rows) return res;
+  var n = JSON.parse(JSON.stringify(f)), filas = n.rows, porRef = {}, cambio = false, nuevosMov = [];
+  filas.forEach(function (r) { if (r.ref) porRef[r.ref] = r; });
+  fsList('sc_solicitudes').forEach(function (req) {
+    var no = req.__id, mios = activos.filter(function (m) { return m.requestNo === no; });
+    if (req.status === 'CANCELLED' || req.inventoryExcluded) {
+      mios.forEach(function (m) { var r = porRef[m.rowRef]; if (!r) return; var id = 'MOV-RET-' + m.__id.replace(/^MOV-/, ''), antes = r.quantity || 0;
+        nuevosMov.push({ id: id, d: { id: id, ref: m.__id, at: ahora, type: 'RETURN', source: 'AUTO', rowRef: r.ref, itemId: null, qty: m.qty, requestNo: no, line: m.line, area: 'SYSTEM', model: m.model, color: m.color, sampleType: m.sampleType, location: m.location, before: antes, after: antes + m.qty, note: req.inventoryExcluded ? 'Request excluded from inventory' : 'Request cancelled' }, fila: r, delta: m.qty });
+      });
+      return;
+    }
+    if (req.source !== 'FORM' && !(String(req.createdAt || '') >= desde)) return;
+    var usadas = {};
+    (req.lines || []).forEach(function (l) {
+      if (!(l.pieces > 0) || (req.excludedLines || []).indexOf(l.line) >= 0 || mios.some(function (m) { return m.line === l.line; })) return;
+      var ref = l.ref || (req.baseRefs || {})[l.line];
+      if (!ref) { var mb = movsBase.filter(function (m) { return m.requestNo === no && porRef[m.location] && !usadas[m.location] && coincide(m, l); })[0]; if (mb) { ref = mb.location; usadas[ref] = true; } }
+      var r = ref ? porRef[ref] : filas.filter(function (x) { return x.active !== false && (x.quantity || 0) > 0 && coincide({ model: x.model, color: x.color, sampleSize: x.cut20 ? 'CUT' : x.fullPiece ? 'FULL' : x.sampleSize }, l); })
+        .sort(function (a, b) { return Number(b.quantity >= l.pieces) - Number(a.quantity >= l.pieces) || b.quantity - a.quantity; })[0];
+      if (!r || !(r.quantity > 0)) return;
+      var qty = Math.min(l.pieces, r.quantity), antes = r.quantity, id = 'MOV-AUTO-' + no + '-L' + l.line + '-1';
+      nuevosMov.push({ id: id, d: { id: id, at: ahora, type: 'ISSUE', source: 'AUTO', rowRef: r.ref, itemId: null, qty: qty, requestNo: no, line: l.line, area: 'SYSTEM', model: r.model, color: r.color || '', sampleType: r.sampleSize || '', location: etiquetaFila(r), before: antes, after: antes - qty, note: qty < l.pieces ? 'Deducted on arrival — only ' + qty + ' of ' + l.pieces + ' in stock' : 'Deducted on arrival' }, fila: r, delta: -qty });
+    });
+  });
+  nuevosMov.forEach(function (x) { if (!fsCreate('sc_movimientos', x.id, x.d)) return; x.fila.quantity = Math.max(0, (x.fila.quantity || 0) + x.delta); cambio = true; if (x.delta < 0) res.descontados++; else res.regresados++; });
+  if (cambio) fsReplace('sc_config', 'fisico', n, f);
+  return res;
+}
+// Escribe en PRODUCTS (estructura oficial, por REFERENCIA) lo que lleva la plataforma: INVENTARIO, MOSTRAR (activo y con
+// existencia) y ESTATUS; agrega al final los productos nuevos. Solo toca las celdas que cambian; nunca borra filas.
+function escribirInventarioBase(ss) {
+  var f = fsGet('sc_config', 'fisico'); if (!f || !f.rows || !f.rows.length) return 0;
+  var sh = ss.getSheetByName('PRODUCTS'); if (!sh) return 0;
+  var vals = sh.getDataRange().getValues(), h = encabezado(vals, ['MODEL', 'COLOR', 'SAMPLE TYPE', 'INVENTORY']); if (!h) return 0;
+  var fin = Math.max.apply(null, ['MODEL', 'COLOR', 'SAMPLE TYPE', 'INVENTORY', 'MUEBLE / POSICIÓN', 'BACKUP MUEBLE / POSICIÓN', 'REFERENCIA FUENTE', 'STANDARD'].map(function (k) { return h.idx[k] === undefined ? -1 : h.idx[k]; }));
+  var o = encabezado(vals, ['REFERENCIA', 'MODELO', 'INVENTARIO'], fin + 1); if (!o || h.idx['REFERENCIA FUENTE'] === undefined) return 0; // solo la estructura oficial
+  var cRef = h.idx['REFERENCIA FUENTE'], cInv = h.idx['INVENTORY'], cShow = h.idx['DISPLAY'], pRef = o.idx['REFERENCIA'], pInv = o.idx['INVENTARIO'], pEst = o.idx['ESTATUS'];
+  var cambios = 0, filaCat = {}, filaFis = {}, ultima = h.fila;
+  for (var i = h.fila + 1; i < vals.length; i++) { var a = str(vals[i][cRef]), b = str(vals[i][pRef]); if (a) filaCat[a] = i; if (b) filaFis[b] = i; if (a || b || str(vals[i][h.idx['MODEL']])) ultima = i; }
+  var pon = function (i, c, v) { if (c === undefined || c < 0) return; if (String(vals[i][c]) !== String(v)) { sh.getRange(i + 1, c + 1).setValue(v); vals[i][c] = v; cambios++; } };
+  f.rows.forEach(function (r) {
+    if (!r.ref) return;
+    var q = r.quantity || 0, show = r.active !== false && q > 0;
+    if (filaCat[r.ref] === undefined && filaFis[r.ref] === undefined) { // producto nuevo en la plataforma: se agrega a la base
+      ultima++;
+      var fila = []; for (var k = 0; k < vals[0].length; k++) fila.push('');
+      var tipo = r.cut20 ? '20×20 CUT' : r.fullPiece ? 'STANDARD' : '';
+      var set = function (c, v) { if (c !== undefined && c >= 0) fila[c] = v; };
+      set(cShow, show); set(h.idx['MODEL'], r.model); set(h.idx['COLOR'], r.color || ''); set(h.idx['TAMAÑO DE MUESTRA'] < fin ? h.idx['TAMAÑO DE MUESTRA'] : -1, r.sampleSize || ''); set(h.idx['SAMPLE TYPE'], tipo);
+      set(cInv, q); set(cRef, r.ref); set(h.idx['FORM LABEL'], [r.model, r.color, r.finish].filter(Boolean).join(' · ')); set(h.idx['MUESTRA / CUT'], !!r.cut20); set(h.idx['STANDARD'], !!r.fullPiece);
+      set(o.idx['FUENTE'], 'PLATAFORMA'); set(o.idx['MODELO'], r.model); set(o.idx['COLOR'], r.color || ''); set(o.idx['ACABADO'], r.finish || ''); set(pInv, q); set(o.idx['TAMAÑO DE MUESTRA'], r.sampleSize || '');
+      set(o.idx['MUESTRA / CUT'], !!r.cut20); set(o.idx['STANDARD'], !!r.fullPiece); set(pRef, r.ref); set(pEst, q > 0 ? 'DISPONIBLE' : 'SIN EXISTENCIA');
+      sh.getRange(ultima + 1, 1, 1, fila.length).setValues([fila]); cambios++;
+      return;
+    }
+    if (filaCat[r.ref] !== undefined) { pon(filaCat[r.ref], cInv, q); pon(filaCat[r.ref], cShow, show); }
+    if (filaFis[r.ref] !== undefined) { pon(filaFis[r.ref], pInv, q); pon(filaFis[r.ref], pEst, q > 0 ? 'DISPONIBLE' : 'SIN EXISTENCIA'); }
+  });
+  return cambios;
+}
+
 function pedidosPlataforma() {
   var res = { folios: 0, descuentos: 0 };
   var nuevos = fsList('sc_pedidos').filter(function (p) { return p.nuevo === true; });

@@ -5,7 +5,7 @@
 import { logEvent } from './common.js';
 import { STATUSES } from './catalog.js';
 import { norm } from './sheet-parse.js';
-import { touchPhysical } from './inventory.js';
+import { touchPhysical, baseMatches as baseLineMatch } from './inventory.js';
 import { localParts } from './time.js';
 
 const TZ = 'America/Mexico_City';
@@ -80,7 +80,18 @@ function applySourceSnapshot(d, { requests = [], tracking = [], operation = [], 
   // The official Houston layout of the base (inventory keyed by REFERENCIA, deductions recalculated there) makes the
   // base the inventory authority again: the platform mirrors it and does not deduct by itself.
   // Once the platform keeps the inventory (PLATFORM), the base's inventory and deductions are ignored entirely.
-  if ((d.settings || {}).inventorySource === 'PLATFORM') { catalog = { items: [], physical: [] }; moves = []; }
+  // Their deductions only tell which exact row the base picked for each line (req.baseRefs), so the platform deducts that same row.
+  if ((d.settings || {}).inventorySource === 'PLATFORM') {
+    for (const m of moves) {
+      const req = d.requests[m.requestNo];
+      const row = req && m.location && (d.physicalInventory || []).find((r) => r.ref === m.location || r.reference === m.location);
+      if (!row) continue;
+      const taken = new Set(Object.values(req.baseRefs || {}));
+      const line = (req.lines || []).find((l) => !(req.baseRefs || {})[l.line] && !taken.has(row.ref) && baseLineMatch(m, l));
+      if (line) req.baseRefs = { ...(req.baseRefs || {}), [line.line]: row.ref };
+    }
+    catalog = { items: [], physical: [] }; moves = [];
+  }
   if (catalog.official && !['SHEETS', 'PLATFORM'].includes((d.settings || {}).inventorySource)) d.settings = { ...(d.settings || {}), inventorySource: 'SHEETS' };
   const sheets = (d.settings || {}).inventorySource === 'SHEETS';
   const from = !sheets && d.settings && d.settings.inventoryFrom;
