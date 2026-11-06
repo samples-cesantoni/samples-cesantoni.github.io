@@ -87,7 +87,7 @@ function changeStatus(ctx, { requestNo, to, notes, notify, opKey, exceptionReaso
     d.sheetOutbox.push({ kind: 'STATUS_HISTORY', historyId: entry.id, at });
 
     let email = null;
-    if (notify) {
+    if (notify && req.notificationManagedBy !== 'SAMPLE_STUDIO_V1') {
       const card = statusEmail({ req, status: to, shipment: d.shipments[requestNo], observations: notes, timeZone: config.timeZone, logoSrc: 'cid:cesantoniLogo', carriers: ctx.settings().carriers });
       email = queueEmail(d, { opKey: opKey ? `status:${opKey}` : null, requestNos: [requestNo], type: 'STATUS_UPDATE', to: req.customer.email, ...card });
     }
@@ -139,7 +139,7 @@ function autoPrepare(d, requestNo) {
 
 // CESANTONI session: create the customer email of each automatic change once; the caller sends it.
 const NOTIFY_AUTO = ['SHIPPED', 'DELIVERED'];
-const pendingAuto = (d) => d.statusHistory.filter((h) => h.auto && NOTIFY_AUTO.includes(h.to) && d.requests[h.requestNo]?.status === h.to && EMAIL_RE.test(String(d.requests[h.requestNo].customer?.email || ''))
+const pendingAuto = (d) => d.statusHistory.filter((h) => h.auto && d.requests[h.requestNo]?.notificationManagedBy !== 'SAMPLE_STUDIO_V1' && NOTIFY_AUTO.includes(h.to) && d.requests[h.requestNo]?.status === h.to && EMAIL_RE.test(String(d.requests[h.requestNo].customer?.email || ''))
   && !d.emails.some((e) => e.opKey === `auto:${h.id}`));
 function queueAutoEmails(ctx, d) {
   const ids = [];
@@ -165,3 +165,4 @@ function setDeliveryMode(d, requestNo, mode, area) {
 }
 
 export { requirements, consistency, previewChange, changeStatus, setDeliveryMode, autoShip, autoPrepare, queueAutoEmails, pendingAuto };
+
