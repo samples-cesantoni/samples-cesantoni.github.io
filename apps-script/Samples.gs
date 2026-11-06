@@ -295,10 +295,13 @@ function sincronizar() {
     // Si la plataforma ya lleva el inventario (PLATFORM), de la base solo se toman solicitudes, estatus y guías.
     var ajP = fsGet('sc_config', 'ajustes');
     if (ajP && ajP.inventorySource === 'PLATFORM') {
+      // SAMPLE_STUDIO_SERVER_V1: real requests and reservations live in Firestore.
+      if (!ajP.sampleStudioEnabled) {
       // La plataforma lleva el inventario: descuenta las solicitudes (en la fila que eligió la base) y escribe en PRODUCTS
       // existencias, MOSTRAR y ESTATUS para que el formulario actual se ajuste solo.
       try { var pb = inventarioPlataforma(movimientos, ajP); res.descuentosPlataforma = pb.descontados; res.regresosPlataforma = pb.regresados; } catch (e) { console.error('Inventario de la plataforma: ' + e.message); }
       try { res.celdasBase = escribirInventarioBase(ss); } catch (e) { console.error('Escritura en PRODUCTS: ' + e.message); }
+            }
       cat = { items: [], fisico: [] }; movimientos = [];
     }
     var hc = sha1(JSON.stringify(cat));
@@ -448,6 +451,7 @@ function inventarioPlataforma(movsBase, aj) {
   var n = JSON.parse(JSON.stringify(f)), filas = n.rows, porRef = {}, cambio = false, nuevosMov = [];
   filas.forEach(function (r) { if (r.ref) porRef[r.ref] = r; });
   fsList('sc_solicitudes').forEach(function (req) {
+    if (req.inventoryEngine === 'SAMPLE_STUDIO_V1') return;
     var no = req.__id, mios = activos.filter(function (m) { return m.requestNo === no; });
     if (req.status === 'CANCELLED' || req.inventoryExcluded) {
       mios.forEach(function (m) { var r = porRef[m.rowRef]; if (!r) return; var id = 'MOV-RET-' + m.__id.replace(/^MOV-/, ''), antes = r.quantity || 0;
@@ -785,7 +789,7 @@ function avisosAutomaticos() {
     var opKey = 'auto:' + h.id, id = 'EML-' + sha1(opKey).slice(0, 24), reg = correos[opKey];
     if (reg && reg.status !== 'QUEUED') return; // enviado, enviándose o fallido (se reintenta desde Notificaciones)
     if (reg && reg.origin !== 'APPS_SCRIPT' && ahora - Date.parse(reg.createdAt) < 5 * 60e3) return;
-    var req = fsGet('sc_solicitudes', h.requestNo); if (!req || req.status !== h.to) return;
+    var req = fsGet('sc_solicitudes', h.requestNo); if (!req || req.notificationManagedBy === 'SAMPLE_STUDIO_V1' || req.status !== h.to) return;
     var contacto = fsGet('sc_contactos', h.requestNo), correo = String(contacto && contacto.email || '').trim().toLowerCase();
     if (!CORREO_OK.test(correo)) return;
     if (!reg) {
@@ -867,3 +871,4 @@ function volcarSalida() {
     return hechos;
   } finally { lock.releaseLock(); }
 }
+
