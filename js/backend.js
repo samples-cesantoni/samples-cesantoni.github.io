@@ -514,7 +514,7 @@ export async function handle(method, path, { body, form } = {}) {
     if (store.area === 'CESANTONI') {
       // Requests from the public form become folios; the form's counter stays ahead; the form's catalog follows the inventory.
       if (intake.pendingIntake(store.d).length) await store.mutate((d) => intake.convertIntake(d), 'INTAKE').catch(() => null);
-      if (stock.platformMode(store.d)) {
+      if (stock.platformMode(store.d) && !store.d.settings?.sampleStudioEnabled) {
         await ensureFolio();
         const items = stock.publicCatalog(store.d);
         if (JSON.stringify(items) !== JSON.stringify((store.d.publicCatalog || {}).items)) await store.mutate((d) => { d.publicCatalog = { items, updatedAt: new Date().toISOString() }; }, 'PUBLIC_CATALOG').catch(() => null);
@@ -529,3 +529,4 @@ export async function handle(method, path, { body, form } = {}) {
     return await r.fn(q, body || {}, p.match(r.re).slice(1).map(decodeURIComponent), form);
   } catch (e) { throw translate(e); }
 }
+
