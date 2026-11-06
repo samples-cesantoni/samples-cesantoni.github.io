@@ -13,6 +13,7 @@ function itemView(d, it) {
   const state = available <= 0 ? 'OUT_OF_STOCK' : available < 5 ? 'LOW' : 'AVAILABLE';
   return { ...it, reserved, available, state };
 }
+const serverManaged = (r) => r?.inventoryEngine === 'SAMPLE_STUDIO_V1';
 const sheetsMode = (d) => (d.settings || {}).inventorySource === 'SHEETS';
 // When the base keeps the inventory, products no longer in it are left out.
 function listItems(d) { return Object.values(d.inventory).filter((it) => !(sheetsMode(d) && it.inSource === false)).map((it) => itemView(d, it)); }
@@ -23,7 +24,7 @@ function candidates(d, line) {
     const lt = new Set(norm(`${line.model} ${line.color}`).split(/[^A-Z0-9ÁÉÍÓÚÑ]+/).filter(Boolean));
     const want = stock.kindOf(line.pieceSize);
     return (d.physicalInventory || []).filter((r) => r.active !== false && (r.ref === line.ref || (norm(r.model).split(/[^A-Z0-9ÁÉÍÓÚÑ]+/).filter(Boolean).every((t) => lt.has(t)) && (!want || stock.rowKind(r) === want))))
-      .map((r) => ({ itemId: r.ref, sku: '', model: r.model, color: r.color, format: r.sampleSize, sampleType: stock.rowKind(r), location: stock.rowLabel(r), onHand: r.quantity || 0, reserved: 0, available: r.quantity || 0, preferred: r.ref === line.ref }))
+      .map((r) => ({ itemId: r.ref, sku: '', model: r.model, color: r.color, format: r.sampleSize, sampleType: stock.rowKind(r), location: stock.rowLabel(r), onHand: r.quantity || 0, reserved: r.reserved || 0, available: Math.max(0, (r.quantity || 0) - (r.reserved || 0)), preferred: r.ref === line.ref }))
       .sort((a, b) => Number(b.preferred) - Number(a.preferred) || b.onHand - a.onHand);
   }
   const wantCut = /cut/i.test(line.pieceSize || '');
@@ -45,15 +46,18 @@ function lineAllocation(d, requestNo) {
     const excludedLine = (req.excludedLines || []).includes(line.line);
     const deductedQty = deductions.reduce((s, m) => s + (m.qty || 0), 0);
     const cands = candidates(d, line);
-    const location = deductions[0]?.location || cands[0]?.location || '';
+    const reservations = serverManaged(req) ? d.reservations.filter(r => r.requestNo === requestNo && r.line === line.line && r.state === 'ACTIVE') : [];
+    const location = reservations[0]?.location || deductions[0]?.location || cands[0]?.location || '';
+    const serverIssued = serverManaged(req) ? d.movements.filter(m => m.requestNo === requestNo && m.line === line.line && m.source === 'SAMPLE_STUDIO_V1' && m.type === 'ISSUE') : [];
     const shortage = deductedQty < line.pieces && !cands.some((c) => c.available >= line.pieces - deductedQty);
-    return { ...line, deductions, deductedQty, excludedLine, reservations: [], reservedQty: deductedQty, candidates: cands.slice(0, 6), location, shortage: shortage && !excludedLine && !req.inventoryExcluded && !sheetsMode(d) }; // with the base in charge, what it did not deduct is its decision
+    return { ...line, deductions: deductions.concat(serverIssued), deductedQty: deductedQty + serverIssued.reduce((s,m) => s+m.qty, 0), excludedLine, reservations, reservedQty: reservations.reduce((s,r) => s+r.qty, 0) + deductedQty, candidates: cands.slice(0, 6), location, shortage: shortage && !excludedLine && !req.inventoryExcluded && !sheetsMode(d) }; // with the base in charge, what it did not deduct is its decision
   });
 }
 
 function reserve(d, { requestNo, line, itemId, qty, opKey }, area) {
   return once(d, opKey, () => {
     const req = getRequest(d, requestNo);
+    if (serverManaged(req)) throw new AppError(409, 'SERVER_INVENTORY', 'El servidor administra estas reservas. Actualiza el estatus para liberar o confirmar la salida.');
     if (FINAL_STATUSES.includes(req.status)) throw new AppError(409, 'REQUEST_CLOSED', 'Request is delivered or cancelled');
     const l = req.lines.find((x) => x.line === Number(line));
     if (!l) throw new AppError(400, 'LINE_NOT_FOUND', 'Requested line not found');
@@ -77,6 +81,7 @@ function reserve(d, { requestNo, line, itemId, qty, opKey }, area) {
 function release(d, { reservationId }, area) {
   const r = d.reservations.find((x) => x.id === reservationId);
   if (!r) throw new AppError(404, 'RESERVATION_NOT_FOUND', 'Reservation not found');
+  if (r.inventoryEngine === 'SAMPLE_STUDIO_V1') throw new AppError(409, 'SERVER_INVENTORY', 'Esta reserva la administra el servidor.');
   if (r.state !== 'ACTIVE') throw new AppError(409, 'RESERVATION_NOT_ACTIVE', 'Only active reservations can be released');
   r.state = 'RELEASED'; r.releasedAt = new Date().toISOString();
   if (d.inventory[r.itemId]) d.inventory[r.itemId].reserved = reservedFor(d, r.itemId);
@@ -90,6 +95,7 @@ function issue(d, { reservationId, opKey }, area) {
   return once(d, opKey, () => {
     const r = d.reservations.find((x) => x.id === reservationId);
     if (!r) throw new AppError(404, 'RESERVATION_NOT_FOUND', 'Reservation not found');
+  if (r.inventoryEngine === 'SAMPLE_STUDIO_V1') throw new AppError(409, 'SERVER_INVENTORY', 'Esta reserva la administra el servidor.');
     if (r.state !== 'ACTIVE') throw new AppError(409, 'ALREADY_ISSUED', 'This reservation was already issued or released');
     const it = d.inventory[r.itemId];
     if (it.onHand < r.qty) throw new AppError(409, 'NEGATIVE_STOCK', 'Issuing would leave negative stock');
@@ -178,6 +184,7 @@ function pendingInventory(d) {
   if (!c) return out;
   const all = activeDeductions(d);
   for (const req of Object.values(d.requests)) {
+    if (serverManaged(req)) continue;
     if (req.status === 'CANCELLED' || req.inventoryExcluded) { if (all.some((m) => m.requestNo === req.requestNo)) out.giveBack.push(req.requestNo); continue; }
     if (!(String(req.createdAt || '') >= c)) continue;
     const mine = act.filter((m) => m.requestNo === req.requestNo);
@@ -194,6 +201,7 @@ function pendingPlatform(d) {
   const act = activeAuto(d);
   const out = { deduct: [], giveBack: [] };
   for (const req of Object.values(d.requests)) {
+    if (serverManaged(req)) continue;
     const mine = act.filter((m) => m.requestNo === req.requestNo);
     if (req.status === 'CANCELLED' || req.inventoryExcluded) { if (mine.length) out.giveBack.push(req.requestNo); continue; }
     if (req.source !== 'FORM' && !(String(req.createdAt || '') >= from)) continue; // older requests were deducted by the base
@@ -295,6 +303,7 @@ function adjustPhysical(d, { cabinet, position, model, newQty, reason }, area) {
 function setInventoryExclusion(d, requestNo, excluded) {
   if (sheetsMode(d)) throw new AppError(409, 'INVENTORY_IN_SHEETS', 'El inventario lo lleva la base de Sheets (INVENTARIO OFICIAL): haz el cambio en la base y se refleja en la siguiente sincronización.');
   const req = getRequest(d, requestNo);
+    if (serverManaged(req)) throw new AppError(409, 'SERVER_INVENTORY', 'El servidor administra estas reservas. Actualiza el estatus para liberar o confirmar la salida.');
   const at = new Date().toISOString();
   req.inventoryExcluded = Boolean(excluded);
   if (excluded) giveBack(d, requestNo, 'Request excluded from inventory', at);
@@ -310,6 +319,7 @@ function includeLine(d, req, line, at) {
 function setLineExclusion(d, requestNo, lineNo, excluded) {
   if (sheetsMode(d)) throw new AppError(409, 'INVENTORY_IN_SHEETS', 'El inventario lo lleva la base de Sheets (INVENTARIO OFICIAL): haz el cambio en la base y se refleja en la siguiente sincronización.');
   const req = getRequest(d, requestNo);
+    if (serverManaged(req)) throw new AppError(409, 'SERVER_INVENTORY', 'El servidor administra estas reservas. Actualiza el estatus para liberar o confirmar la salida.');
   const line = (req.lines || []).find((l) => l.line === Number(lineNo));
   if (!line) throw new AppError(400, 'LINE_NOT_FOUND', 'Requested line not found');
   const at = new Date().toISOString();
@@ -361,3 +371,4 @@ function applyInitialInventory(d, rows, name) {
 }
 
 export { listItems, itemView, candidates, lineAllocation, reserve, release, issue, reservedFor, reconcileInventory, needsReconcile, adjustStock, setInventoryExclusion, setLineExclusion, applyInitialInventory, adjustPhysical, physicalAt, sheetsMode, baseMatches, activeAuto, activeDeductions, touchPhysical, cutover as inventoryFrom };
+
