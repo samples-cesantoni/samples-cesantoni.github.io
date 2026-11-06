@@ -9,6 +9,7 @@ import { norm } from './sheet-parse.js';
 const platformMode = (d) => (d.settings || {}).inventorySource === 'PLATFORM';
 const kindOf = (x) => { const v = norm(x); return /MESH|MALLA/.test(v) ? 'MESH' : /STANDARD|FULL|COMPLETA/.test(v) ? 'FULL' : /CUT|SAMPLE|CORTE|8×8|8X8|20×20|20X20/.test(v) ? 'CUT' : ''; };
 const rowKind = (r) => (r.cut20 ? 'CUT' : r.fullPiece ? 'FULL' : kindOf(r.sampleSize));
+const availableRow = (r) => Math.max(0, (r.quantity || 0) - (r.reserved || 0));
 const rowLabel = (r) => (r.cabinet && r.position ? `Mueble ${r.cabinet} · Pos. ${r.position}` : r.ref || r.reference || '');
 const tokens = (x) => norm(x).split(/[^A-Z0-9ÁÉÍÓÚÑ]+/).filter((t) => t && !/^\d+(\.\d+)?$/.test(t));
 
@@ -36,7 +37,7 @@ function matchRow(d, line, pieces = 1) {
 }
 
 function deductRow(d, requestNo, line, row, at) {
-  const qty = Math.min(line.pieces, row.quantity || 0);
+  const qty = Math.min(line.pieces, availableRow(row));
   if (qty <= 0) return null;
   const n = d.movements.filter((m) => m.source === 'AUTO' && m.type === 'ISSUE' && m.requestNo === requestNo && m.line === line.line).length + 1;
   const before = row.quantity;
@@ -58,7 +59,7 @@ function returnToRow(d, m) {
 // What the customer form offers: active rows, without quantities (only whether there is stock).
 function publicCatalog(d) {
   return (d.physicalInventory || []).filter((r) => r.active !== false && r.ref).map((r) => ({
-    ref: r.ref, model: r.model, color: r.color || '', finish: r.finish || '', size: r.sampleSize || '', kind: rowKind(r), available: (r.quantity || 0) > 0,
+    ref: r.ref, model: r.model, color: r.color || '', finish: r.finish || '', size: r.sampleSize || '', kind: rowKind(r), available: availableRow(r) > 0,
   })).sort((a, b) => a.model.localeCompare(b.model) || a.color.localeCompare(b.color) || a.size.localeCompare(b.size));
 }
 
@@ -105,6 +106,8 @@ function applyExcel(d, rows, { name, deactivateMissing = false }, area) {
   startPlatform(d);
   const at = new Date().toISOString();
   const { pairs, missing } = pairExcel(d, rows);
+  for (const {x,row} of pairs) if (row && x.qty < (row.reserved || 0)) throw new AppError(409, 'RESERVED_STOCK', 'El conteo no puede ser menor que las piezas reservadas.');
+  if (deactivateMissing && missing.some(r => r.reserved > 0)) throw new AppError(409, 'RESERVED_STOCK', 'Hay productos reservados que no se pueden desactivar.');
   const mv = (row, before, after, note) => { if (before !== after) d.movements.push({ id: rid('MOV'), at, type: after > before ? 'RECEIPT' : 'ADJUST', source: 'EXCEL', rowRef: row.ref, itemId: null, qty: Math.abs(after - before), requestNo: null, area, model: row.model, color: row.color, sampleType: row.sampleSize, location: rowLabel(row), before, after, note }); };
   let added = 0, changed = 0;
   for (const { x, row } of pairs) {
@@ -142,6 +145,8 @@ function saveRow(d, input, area) {
   };
   const row = input.ref ? rowByRef(d, input.ref) : null;
   const before = row ? row.quantity ?? 0 : 0;
+  if (row && q < (row.reserved || 0)) throw new AppError(409, 'RESERVED_STOCK', 'La existencia no puede ser menor que la reserva activa.');
+  if (row?.reserved > 0 && (data.active === false || fields.some(k => data[k] !== undefined && String(data[k]) !== String(row[k] ?? '')))) throw new AppError(409, 'RESERVED_STOCK', 'Conserva los datos y la ubicación del material hasta cerrar sus reservas.');
   if (before !== q && String(input.reason || '').trim().length < 3) throw new AppError(400, 'REASON_REQUIRED', 'Escribe el motivo del cambio de existencia (por ejemplo: llegaron muestras, conteo físico)');
   let saved;
   if (row) saved = setRow(d, row.ref, { ...data, quantity: q });
@@ -155,3 +160,4 @@ function saveRow(d, input, area) {
 }
 
 export { platformMode, kindOf, rowKind, rowLabel, ensureRefs, rowByRef, matchRow, deductRow, returnToRow, publicCatalog, startPlatform, diffExcel, applyExcel, saveRow };
+
