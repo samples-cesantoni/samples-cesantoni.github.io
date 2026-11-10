@@ -160,6 +160,8 @@ const D = {
   'stc.notify': ['Notify the customer by email', 'Notificar al cliente por correo'], 'stc.recipient': ['Recipient (from the original request)', 'Destinatario (de la solicitud original)'], 'stc.preview': ['Preview email', 'Vista previa del correo'],
   'stc.apply': ['Confirm status update', 'Confirmar actualización de estatus'], 'stc.done': ['Status updated', 'Estatus actualizado'], 'stc.confirmQ': ['Apply this status change?', '¿Aplicar este cambio de estatus?'],
   'stc.emailResult': ['Email result', 'Resultado del correo'], 'stc.noEmailMode': ['No valid customer email on the request — notification unavailable.', 'La solicitud no tiene un correo válido — notificación no disponible.'],
+  'mail.SKIPPED': ['Not sent', 'No enviado'], 'set.autoEmails': ['Automatic customer emails (Shipped / Delivered)', 'Correos automáticos al cliente (Enviada / Entregada)'],
+  'set.autoEmailsHint': ['When off, automatic status changes are recorded but the customer is not emailed. Changes made by hand still ask whether to notify.', 'Apagado: los cambios automáticos de estatus se registran pero no se avisa al cliente. Los cambios manuales siguen preguntando si notificar.'],
   'mail.SENT': ['Sent', 'Enviado'], 'mail.QUEUED': ['Queued — not sent', 'En cola — no enviado'], 'mail.FAILED': ['Failed', 'Fallido'], 'mail.SENDING': ['Sending', 'Enviando'], 'mail.retry': ['Retry', 'Reintentar'],
   // notices
   'nt.title': ['Operational notices', 'Avisos operativos'], 'nt.sub': ['Holidays, closures and delays that may affect requests. Closures stop the operational clock.', 'Días festivos, cierres y retrasos que pueden afectar solicitudes. Los cierres detienen el reloj operativo.'],

@@ -141,14 +141,19 @@ function autoPrepare(d, requestNo) {
 const NOTIFY_AUTO = ['SHIPPED', 'DELIVERED'];
 const pendingAuto = (d) => d.statusHistory.filter((h) => h.auto && d.requests[h.requestNo]?.notificationManagedBy !== 'SAMPLE_STUDIO_V1' && NOTIFY_AUTO.includes(h.to) && d.requests[h.requestNo]?.status === h.to && EMAIL_RE.test(String(d.requests[h.requestNo].customer?.email || ''))
   && !d.emails.some((e) => e.opKey === `auto:${h.id}`));
+// Settings «autoEmails» off: the email is still recorded, as Not sent (SKIPPED), so turning it back on never
+// sends old changes; CESANTONI can still send one by hand from Notifications.
+const AUTO_OFF_REASON = 'Not sent — automatic customer emails are turned off in Settings';
 function queueAutoEmails(ctx, d) {
   const ids = [];
+  const off = ctx.settings().autoEmails === false;
   for (const h of pendingAuto(d)) {
     const key = `auto:${h.id}`;
     const req = d.requests[h.requestNo];
     try {
       const card = statusEmail({ req, status: h.to, shipment: d.shipments[h.requestNo], observations: '', timeZone: ctx.config.timeZone, logoSrc: 'cid:cesantoniLogo', carriers: ctx.settings().carriers });
       const e = queueEmail(d, { opKey: key, requestNos: [h.requestNo], type: 'STATUS_UPDATE', to: req.customer.email, ...card });
+      if (off) { e.status = 'SKIPPED'; e.statusReason = AUTO_OFF_REASON; continue; }
       ids.push(e.id);
     } catch { /* no valid customer email: CESANTONI sees the change in the history */ }
   }

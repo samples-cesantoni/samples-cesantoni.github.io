@@ -12,7 +12,7 @@ export async function render(el, ctx) {
     const all = (await api('/emails')).emails;
     if (!ctx.isCurrent()) return;
     const n = (k) => all.filter((e) => e.status === k).length;
-    el.querySelector('[data-k]').innerHTML = [['', all.length, ''], ['SENT', n('SENT'), 'green'], ['QUEUED', n('QUEUED'), n('QUEUED') ? 'amber' : ''], ['FAILED', n('FAILED'), n('FAILED') ? 'red' : '']].map(([k, v, c]) => `<button class="kpi ${c} ${k === st ? 'sel' : ''}" data-st="${k}" style="text-align:left;cursor:pointer"><div class="k">${esc(k ? t('mail.' + k) : t('common.all'))}</div><div class="v">${v}</div></button>`).join('');
+    el.querySelector('[data-k]').innerHTML = [['', all.length, ''], ['SENT', n('SENT'), 'green'], ['QUEUED', n('QUEUED'), n('QUEUED') ? 'amber' : ''], ['FAILED', n('FAILED'), n('FAILED') ? 'red' : ''], ...(n('SKIPPED') ? [['SKIPPED', n('SKIPPED'), '']] : [])].map(([k, v, c]) => `<button class="kpi ${c} ${k === st ? 'sel' : ''}" data-st="${k}" style="text-align:left;cursor:pointer"><div class="k">${esc(k ? t('mail.' + k) : t('common.all'))}</div><div class="v">${v}</div></button>`).join('');
     el.querySelectorAll('[data-st]').forEach((b) => b.addEventListener('click', () => { st = b.dataset.st; load(); }));
     const emails = all.filter((e) => !st || e.status === st);
     el.querySelector('[data-count]').textContent = `${emails.length} ${t('em.count')}`;

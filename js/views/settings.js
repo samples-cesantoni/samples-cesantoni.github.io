@@ -25,6 +25,8 @@ export async function render(el, ctx) {
       <form class="card" data-mail><div class="card-head"><h2>${t('set.emailMode')}</h2></div>
         <label class="check"><input type="radio" name="emailMode" value="TEST" ${s.emailMode !== 'PRODUCTION' ? 'checked' : ''}><span>${t('set.modeTest')}</span></label>
         <label class="check" style="margin-top:8px"><input type="radio" name="emailMode" value="PRODUCTION" ${s.emailMode === 'PRODUCTION' ? 'checked' : ''} ${se.rol === 'admin' ? '' : 'disabled'}><span>${t('set.modeProd')}</span></label>
+        <label class="check" style="margin-top:14px"><input type="checkbox" name="autoEmails" ${s.autoEmails !== false ? 'checked' : ''}><span>${t('set.autoEmails')}</span></label>
+        <p class="hint">${t('set.autoEmailsHint')}</p>
         <label class="field" style="margin-top:12px"><span>${t('set.testRecipient')}</span><input class="input" type="email" name="testRecipient" value="${s.testRecipient || ''}"></label>
         <div class="kv" style="margin-top:12px"><div><div class="k">Service</div><div class="v">${se.email.provider === 'NONE' ? 'Not configured' : 'Gmail (Apps Script) · EmailJS backup'}</div></div><div><div class="k">Live sending</div><div class="v">${se.email.live ? 'Yes' : 'No — messages stay queued'}</div></div></div>
         <div class="form-actions"><button class="btn btn-primary" type="submit">${t('common.save')}</button></div></form>
@@ -59,7 +61,7 @@ export async function render(el, ctx) {
     el.querySelector('[data-hol]').addEventListener('submit', (e) => { e.preventDefault(); const d = e.target.day.value; if (d) save({ holidays: [...s.holidays, d] }).catch((x) => toast(x.message, 'err')); });
     el.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', () => save({ holidays: s.holidays.filter((h) => h !== b.dataset.rm) }).catch((x) => toast(x.message, 'err'))));
     el.querySelector('[data-car]').addEventListener('submit', (e) => { e.preventDefault(); const f = e.target; const carriers = {}; for (const k of Object.keys(s.carriers)) if (f[`c_${k}`]) carriers[k] = { trackingUrl: f[`c_${k}`].value.trim() }; busy(f.querySelector('[type=submit]'), () => save({ carriers })).catch(() => {}); });
-    el.querySelector('[data-mail]').addEventListener('submit', (e) => { e.preventDefault(); const f = e.target; busy(f.querySelector('[type=submit]'), () => save({ emailMode: f.emailMode.value, testRecipient: f.testRecipient.value.trim() })).catch(() => {}); });
+    el.querySelector('[data-mail]').addEventListener('submit', (e) => { e.preventDefault(); const f = e.target; busy(f.querySelector('[type=submit]'), () => save({ emailMode: f.emailMode.value, autoEmails: f.autoEmails.checked, testRecipient: f.testRecipient.value.trim() })).catch(() => {}); });
     el.querySelector('[data-import]').addEventListener('submit', (e) => {
       e.preventDefault(); const f = e.target; const fd = new FormData(); fd.append('file', f.file.files[0]);
       busy(f.querySelector('[type=submit]'), async () => { const r = await api('/sync/import', { method: 'POST', form: fd }); toast(`Created ${r.created} · updated ${r.updated} · unchanged ${r.unchanged} · catalog +${r.itemsCreated}`, 'ok', 8000); }).catch(() => {});

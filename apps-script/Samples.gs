@@ -787,7 +787,7 @@ function avisosAutomaticos() {
   var correos = {}; fsList('sc_correos').forEach(function (c) { if (c.opKey && c.opKey.indexOf('auto:') === 0) correos[c.opKey] = c; });
   fsList('sc_historial').filter(function (h) { return h.auto && AVISAR_AUTO.indexOf(h.to) >= 0; }).forEach(function (h) {
     var opKey = 'auto:' + h.id, id = 'EML-' + sha1(opKey).slice(0, 24), reg = correos[opKey];
-    if (reg && reg.status !== 'QUEUED') return; // enviado, enviándose o fallido (se reintenta desde Notificaciones)
+    if (reg && reg.status !== 'QUEUED') return; // enviado, enviándose, fallido o no enviado (se reintenta desde Notificaciones)
     if (reg && reg.origin !== 'APPS_SCRIPT' && ahora - Date.parse(reg.createdAt) < 5 * 60e3) return;
     var req = fsGet('sc_solicitudes', h.requestNo); if (!req || req.notificationManagedBy === 'SAMPLE_STUDIO_V1' || req.status !== h.to) return;
     var contacto = fsGet('sc_contactos', h.requestNo), correo = String(contacto && contacto.email || '').trim().toLowerCase();
@@ -797,7 +797,11 @@ function avisosAutomaticos() {
       reg = { origin: 'APPS_SCRIPT', id: id, opKey: opKey, requestNos: [h.requestNo], type: 'STATUS_UPDATE', to: correo, subject: tarjeta.subject, html: tarjeta.html, text: tarjeta.text, noticeId: null, status: 'QUEUED', statusReason: '', attempts: 0, providerId: null, error: '', createdAt: new Date().toISOString(), sentAt: null, deliveredTo: null };
       if (!fsCreate('sc_correos', id, reg)) return;
     }
-    var destino = prueba ? ajustes.testRecipient : reg.to, prev = fsGet('sc_correos', id);
+    var prev0 = fsGet('sc_correos', id);
+    if (ajustes.autoEmails === false) { // Ajustes: correos automáticos al cliente apagados → queda registrado como no enviado
+      reg.status = 'SKIPPED'; reg.statusReason = 'Not sent — automatic customer emails are turned off in Settings'; fsReplace('sc_correos', id, reg, prev0); return;
+    }
+    var destino = prueba ? ajustes.testRecipient : reg.to, prev = prev0;
     if (!CORREO_OK.test(destino || '')) {
       if (reg.statusReason !== 'TEST mode: no test recipient configured — not sent') { reg.statusReason = 'TEST mode: no test recipient configured — not sent'; fsReplace('sc_correos', id, reg, prev); }
       return;

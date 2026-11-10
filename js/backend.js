@@ -35,7 +35,7 @@ const ctx = {
   settings: () => {
     const s = store.d.settings || {};
     const D = C.DEFAULT_SETTINGS;
-    return { ...D, ...s, businessHours: { ...D.businessHours, ...(s.businessHours || {}) }, targets: { ...D.targets, ...(s.targets || {}) }, carriers: { ...D.carriers, ...(s.carriers || {}) }, emailMode: s.emailMode || 'TEST', testRecipient: s.testRecipient || '' };
+    return { ...D, ...s, businessHours: { ...D.businessHours, ...(s.businessHours || {}) }, targets: { ...D.targets, ...(s.targets || {}) }, carriers: { ...D.carriers, ...(s.carriers || {}) }, emailMode: s.emailMode || 'TEST', testRecipient: s.testRecipient || '', autoEmails: s.autoEmails !== false };
   },
 };
 
@@ -489,6 +489,7 @@ on('PUT', '/settings', (q, b) => {
     if (b.emailMode === 'PRODUCTION' && me.rol !== 'admin') throw new AppError(403, 'FORBIDDEN', 'Solo un administrador puede activar el envío real a clientes.');
     next.emailMode = b.emailMode;
   }
+  if (b.autoEmails !== undefined) next.autoEmails = Boolean(b.autoEmails);
   if (b.testRecipient !== undefined) {
     if (b.testRecipient && !EMAIL_RE.test(b.testRecipient)) throw new AppError(400, 'EMAIL', 'Invalid test recipient');
     next.testRecipient = b.testRecipient;
@@ -521,7 +522,8 @@ export async function handle(method, path, { body, form } = {}) {
       }
     }
     if (store.area === 'CESANTONI' && inventory.needsReconcile(store.d)) await store.mutate((d) => inventory.reconcileInventory(d), 'INVENTORY_AUTO').catch(() => null);
-    // Automatic status changes (Warehouse tracking + label, UPS): the customer email goes out automatically.
+    // Automatic status changes (Warehouse tracking + label, UPS): the customer email goes out automatically,
+    // unless Settings turned automatic customer emails off (then it is recorded as Not sent).
     if (store.area === 'CESANTONI' && status.pendingAuto(store.d).length) {
       const ids = await store.mutate((d) => status.queueAutoEmails(ctx, d), 'AUTO_EMAIL').catch(() => []);
       for (const id of ids || []) await dispatch(id).catch(() => null); // same TEST / PRODUCTION rules as any other email
