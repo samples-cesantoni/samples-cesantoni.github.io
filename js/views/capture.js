@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { t } from '../i18n.js';
-import { html, raw, icon, esc, statusBadge, modal, toast, busy, modeLabel, emptyState, opKey } from '../ui.js';
+import { html, raw, icon, esc, statusBadge, modal, toast, busy, modeLabel, emptyState, opKey, usd, fmtDate } from '../ui.js';
 import { mountUploader } from '../media.js';
 import { trackingForm, deliveryForm } from './shipping-forms.js';
 import { evidenceGrid, bindEvidence } from './shared.js';
@@ -9,7 +9,8 @@ import { evidenceGrid, bindEvidence } from './shared.js';
 // request shows every step on the same page, in order, with only the step to do now expanded.
 const DELIVERY_TYPES = { COURIER: ['DELIVERY_PROOF'], PICKUP: ['PICKUP_CONFIRMATION', 'COLLECTION_PROOF', 'DELIVERED_MATERIAL_PHOTO'], WAREHOUSE: ['HANDOVER_PROOF', 'DELIVERY_PROOF'] };
 const STEP_KEYS = { prep: ['PREPARATION'], pack: ['PACKAGING'], ship: ['TRACKING_NUMBER', 'SHIPPING_LABEL', 'DROPOFF'], delivery: ['DELIVERY', 'PICKUP_CONFIRMATION', 'COLLECTION_PROOF', 'HANDOVER'] };
-const QUEUES = ['ALL', 'prep', 'pack', 'ship', 'delivery', 'returned', 'done'];
+const QUEUES = ['ALL', 'prep', 'pack', 'ship', 'cost', 'delivery', 'returned', 'done'];
+const hasCost = (det) => det.shipment?.reportedCost?.amountUsd !== null && det.shipment?.reportedCost?.amountUsd !== undefined;
 const OK = ['APPROVED', 'COMPLETE', 'PENDING_REVIEW'];
 
 const live = (det) => det.evidence.filter((e) => !e.supersededBy && e.state !== 'RETURNED');
@@ -29,13 +30,15 @@ function plan(det) {
     { k: 'material', st: det.lines.every((l) => l.excludedLine || det.inventoryExcluded || (l.deductedQty || 0) >= l.pieces) ? 'done' : 'info' },
     { k: 'prep', st: state('prep', has((e) => e.stage === 'PREPARATION')) },
     { k: 'pack', st: state('pack', has((e) => e.stage === 'PACKAGING')) },
-    ...(courier ? [{ k: 'ship', st: state('ship', det.trackingNo && has((e) => e.type === 'SHIPPING_LABEL_PHOTO')) }] : []),
+    ...(courier ? [{ k: 'ship', st: state('ship', det.trackingNo && has((e) => e.type === 'SHIPPING_LABEL_PHOTO')) }, { k: 'cost', st: hasCost(det) ? 'done' : 'todo' }] : []),
     { k: 'delivery', st: det.status === 'DELIVERED' ? 'done' : state('delivery', has((e) => ['DELIVERY', 'PICKUP', 'WAREHOUSE_DELIVERY'].includes(e.stage))) },
   ];
   const work = steps.filter((s) => s.k !== 'material');
   const next = work.find((s) => s.st === 'returned') || work.find((s) => s.st === 'todo') || null;
   const returned = det.evidence.some((e) => e.state === 'RETURNED' && !e.supersededBy);
-  return { steps, next: next ? next.k : 'done', returned, done: work.filter((s) => s.st === 'done').length, total: work.length };
+  const all = det.evidence.filter((e) => !e.supersededBy);
+  const evs = { APPROVED: all.filter((e) => e.state === 'APPROVED').length, PENDING: all.filter((e) => e.state === 'PENDING').length, RETURNED: all.filter((e) => e.state === 'RETURNED').length };
+  return { steps, next: next ? next.k : 'done', returned, done: work.filter((s) => s.st === 'done').length, total: work.length, evs };
 }
 
 export async function render(el, ctx) {
@@ -57,7 +60,7 @@ export async function render(el, ctx) {
   const search = el.querySelector('[data-search] input');
 
   const loadList = async () => {
-    const { requests } = await api('/requests?active=1');
+    const { requests } = await api('/requests?work=1');
     const dets = await Promise.all(requests.map((r) => api(`/requests/${encodeURIComponent(r.requestNo)}`)));
     if (!ctx.isCurrent()) return;
     rows = dets.map((d, i) => ({ ...requests[i], det: d, plan: plan(d) }))
@@ -66,12 +69,13 @@ export async function render(el, ctx) {
   const inQ = (r, q) => q === 'ALL' || (q === 'returned' ? r.plan.returned : r.plan.next === q);
   const matches = (r, q) => !q || [r.requestNo, r.company, r.customerName, r.city, r.state, ...r.det.lines.map((l) => `${l.model} ${l.color}`)].join(' ').toUpperCase().includes(q);
 
+  const evSummary = (c) => (c.APPROVED + c.PENDING + c.RETURNED ? [['APPROVED', 'green'], ['PENDING', 'amber'], ['RETURNED', 'red']].filter(([k]) => c[k]).map(([k, cls]) => `<span class="badge ${cls}">${c[k]} ${esc(t('wq.ev.' + k))}</span>`).join(' ') : `<span class="small muted">${esc(t('wq.ev.none'))}</span>`);
   function drawList() {
     const q = search.value.trim().toUpperCase();
     const base = rows.filter((r) => matches(r, q));
     const n = Object.fromEntries(QUEUES.map((k) => [k, base.filter((r) => inQ(r, k)).length]));
     const kpi = (k, cls) => `<button class="kpi ${cls} ${queue === k ? 'sel' : ''}" data-q="${k}" style="text-align:left;cursor:pointer"><div class="k">${esc(t('wq.q.' + k))}</div><div class="v">${n[k]}</div></button>`;
-    el.querySelector('[data-k]').innerHTML = kpi('prep', n.prep ? 'amber' : '') + kpi('pack', n.pack ? 'amber' : '') + kpi('ship', n.ship ? 'accent' : '') + kpi('delivery', '') + kpi('returned', n.returned ? 'red' : 'green');
+    el.querySelector('[data-k]').innerHTML = kpi('prep', n.prep ? 'amber' : '') + kpi('pack', n.pack ? 'amber' : '') + kpi('ship', n.ship ? 'accent' : '') + kpi('cost', n.cost ? 'amber' : '') + kpi('delivery', '') + kpi('returned', n.returned ? 'red' : 'green');
     el.querySelector('[data-chips]').innerHTML = QUEUES.filter((k) => k === 'ALL' || n[k] || k === queue).map((k) => `<button class="chip ${k === queue ? 'on' : ''}" data-q="${k}">${esc(t('wq.q.' + k))}<span>${n[k]}</span></button>`).join('');
     el.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => { queue = b.dataset.q === queue && b.classList.contains('kpi') ? 'ALL' : b.dataset.q; drawList(); }));
     const list = base.filter((r) => inQ(r, queue));
@@ -80,7 +84,8 @@ export async function render(el, ctx) {
     box.innerHTML = html`<div class="wq-list">${raw(list.map((r) => { const p = r.plan; const nx = p.returned ? 'returned' : p.next; return html`<button class="wq-row" data-open="${r.requestNo}">
       <div class="wq-main"><div class="wq-folio">${r.requestNo}${r.overdue ? raw(` <span class="dot red" title="${esc(t('k.overdue'))}"></span>`) : ''}</div>
         <div class="wq-cust">${r.company || r.customerName || '—'}</div>
-        <div class="small muted">${[r.city, r.state].filter(Boolean).join(', ') || r.country || ''} · ${r.productCount} ${t('common.products').toLowerCase()} · ${r.pieces} ${t('common.pieces').toLowerCase()} · ${modeLabel(r.deliveryMode)}</div></div>
+        <div class="small muted">${[r.city, r.state].filter(Boolean).join(', ') || r.country || ''} · ${r.productCount} ${t('common.products').toLowerCase()} · ${r.pieces} ${t('common.pieces').toLowerCase()} · ${modeLabel(r.deliveryMode)}</div>
+        <div class="wq-ev">${raw(evSummary(p.evs))}</div></div>
       <div class="wq-progress" aria-label="${p.done}/${p.total}">${raw(p.steps.filter((s) => s.k !== 'material').map((s) => `<i class="${s.st}" title="${esc(t('wq.s.' + s.k))}"></i>`).join(''))}<span class="small muted">${p.done}/${p.total}</span></div>
       <div class="wq-next ${nx === 'returned' ? 'danger' : nx === 'done' ? 'ok' : ''}"><span class="small muted">${t('wq.next')}</span><strong>${t('wq.do.' + nx)}</strong></div>
       <span class="btn btn-primary btn-sm wq-go">${t('wq.continue')} ${icon('chevron')}</span></button>`.s; }).join(''))}</div>`.s;
@@ -131,7 +136,18 @@ export async function render(el, ctx) {
     if (k === 'ship') {
       return html`<div class="wq-sub"><div class="strong">${t('wq.trackTitle')}</div></div><div data-track></div>
         <div class="wq-sub" style="margin-top:16px"><div class="strong">${t('sh.label')} / ${t('sh.dropoff')}</div></div>
-        <div data-up="SHIPPING_LABEL_PHOTO,CARRIER_DROPOFF_PROOF"></div><div data-ev>${evidenceGrid(ev.filter((e) => e.stage === 'SHIPPING'), { area: 'BODEGA' })}</div>`;
+        <div data-up="SHIPPING_LABEL_PHOTO,CARRIER_DROPOFF_PROOF"></div><div data-ev>${evidenceGrid(ev.filter((e) => e.stage === 'SHIPPING' && e.type !== 'SHIPPING_COST_RECEIPT'), { area: 'BODEGA' })}</div>`;
+    }
+    if (k === 'cost') {
+      const rc = det.shipment?.reportedCost;
+      return html`<p class="small muted" style="margin:0 0 12px">${t('wq.costHint')}</p>
+        ${hasCost(det) ? html`<div class="next ok" style="margin:0 0 14px">${icon('check')}<span>${t('wq.costSaved')}: <strong>${usd(rc.amountUsd)}</strong> · ${fmtDate(rc.at)}</span></div>` : ''}
+        <form data-costform class="form-grid" novalidate>
+          <label class="field"><span>${t('wq.costAmount')}</span><input class="input" name="amountUsd" type="number" inputmode="decimal" min="0" step="0.01" value="${rc?.amountUsd ?? ''}" required></label>
+          <label class="field"><span>${t('wq.costNotes')}</span><input class="input" name="notes" maxlength="300" value="${rc?.notes || ''}"></label>
+          <div class="form-actions" style="grid-column:1/-1;margin-top:0"><button class="btn btn-primary" type="submit">${icon('check')}${t('wq.costBtn')}</button></div></form>
+        <div class="wq-sub" style="margin-top:16px"><div class="strong">${t('wq.costReceipt')}</div></div>
+        <div data-up="SHIPPING_COST_RECEIPT"></div><div data-ev>${evidenceGrid(ev.filter((e) => e.type === 'SHIPPING_COST_RECEIPT'), { area: 'BODEGA' })}</div>`;
     }
     const types = DELIVERY_TYPES[det.deliveryMode] || [...new Set(Object.values(DELIVERY_TYPES).flat())];
     return html`${det.deliveryMode && det.deliveryMode !== 'COURIER' ? html`<div data-dform></div>` : html`<p class="small muted">${t('wq.upsAuto')}</p>`}
@@ -146,6 +162,7 @@ export async function render(el, ctx) {
       <div class="card wq-head"><div class="folio-line"><span class="folio">${det.requestNo}</span>${statusBadge(det.status)}${det.overdue ? raw(`<span class="badge red">${esc(t('det.overdueOne'))}</span>`) : ''}</div>
         <div class="wq-cust" style="margin-top:6px">${det.company || det.customerName}</div>
         <div class="small muted">${[det.city, det.state, det.country].filter(Boolean).join(', ')} · ${modeLabel(det.deliveryMode)} · ${det.lines.length} ${t('common.products').toLowerCase()} · ${det.pieces} ${t('common.pieces').toLowerCase()}</div>
+        <div class="wq-ev" style="margin-top:8px"><span class="small muted">${t('wq.ev.title')}:</span> ${raw(evSummary(p.evs))}</div>
         <div class="wq-bar"><i style="width:${Math.round((p.done / p.total) * 100)}%"></i></div><div class="small muted">${p.done} / ${p.total} ${t('wq.stepsDone')}${p.next === 'done' ? '' : ` · ${t('wq.next')}: ${t('wq.do.' + p.next)}`}</div>
         ${det.sourceNotes ? html`<div class="callout info" style="margin-top:12px">${icon('info')}<span>${det.sourceNotes}</span></div>` : ''}
         ${!det.deliveryMode ? html`<div class="callout warn" style="margin-top:12px">${icon('info')}<span>${t('wq.noMode')}</span></div>` : ''}</div>
@@ -173,6 +190,12 @@ export async function render(el, ctx) {
     bindEvidence(body, det.evidence, { meta: ctx.meta, requestNo: det.requestNo, onChange: saved });
     const tr = body.querySelector('[data-track]'); if (tr) trackingForm(tr, { det, ctx, onSaved: saved });
     const df = body.querySelector('[data-dform]'); if (df) deliveryForm(df, { det, ctx, onSaved: saved });
+    body.querySelector('[data-costform]')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const f = e.target;
+      if (f.amountUsd.value === '' || !(Number(f.amountUsd.value) >= 0)) { toast(t('wq.costNeeded'), 'err'); f.amountUsd.focus(); return; }
+      busy(f.querySelector('[type=submit]'), async () => { await api(`/requests/${encodeURIComponent(det.requestNo)}/shipment`, { method: 'PUT', body: { reportedCostUsd: f.amountUsd.value, reportedCostNotes: f.notes.value } }); await saved(); }).catch(() => {});
+    });
     body.querySelector('[data-qty]')?.addEventListener('submit', (e) => {
       e.preventDefault();
       const f = e.target;

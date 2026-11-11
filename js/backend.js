@@ -330,6 +330,8 @@ on('GET', '/requests', (q) => {
   if (q.from) list = list.filter((s) => s.createdAt && localParts(new Date(s.createdAt), TZ).iso >= q.from);
   if (q.to) list = list.filter((s) => s.createdAt && localParts(new Date(s.createdAt), TZ).iso <= q.to);
   if (q.active === '1') list = list.filter((s) => !C.FINAL_STATUSES.includes(s.status));
+  // Warehouse work queue: open requests plus delivered courier shipments whose shipping cost is still missing.
+  if (q.work === '1') list = list.filter((s) => !C.FINAL_STATUSES.includes(s.status) || (s.status === 'DELIVERED' && s.trackingNo && !s.costReported && (!s.deliveryMode || s.deliveryMode === 'COURIER')));
   list.sort((a, b) => b.requestNo.localeCompare(a.requestNo, 'en', { numeric: true }));
   return { requests: list, options: { countries: [...new Set(list.map((s) => s.country).filter(Boolean))].sort(), states: [...new Set(list.map((s) => s.state).filter(Boolean))].sort() } };
 });
@@ -522,6 +524,7 @@ export async function handle(method, path, { body, form } = {}) {
       }
     }
     if (store.area === 'CESANTONI' && inventory.needsReconcile(store.d)) await store.mutate((d) => inventory.reconcileInventory(d), 'INVENTORY_AUTO').catch(() => null);
+    if (store.area === 'CESANTONI' && finance.reportedPending(store.d).length) await store.mutate((d) => finance.adoptReportedCosts(d), 'COST_REPORTED').catch(() => null);
     // Automatic status changes (Warehouse tracking + label, UPS): the customer email goes out automatically,
     // unless Settings turned automatic customer emails off (then it is recorded as Not sent).
     if (store.area === 'CESANTONI' && status.pendingAuto(store.d).length) {

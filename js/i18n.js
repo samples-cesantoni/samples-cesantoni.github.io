@@ -131,6 +131,12 @@ const D = {
   'sh.estimateNote': ['Estimates are shown as estimates; only a recorded delivery counts as delivered.', 'Las fechas estimadas se muestran como estimadas; solo una entrega registrada cuenta como entregada.'],
   // capture
   'common.product': ['Product', 'Producto'],
+  'wq.q.cost': ['Cost to report', 'Por reportar costo'], 'wq.do.cost': ['Report shipping cost', 'Reportar costo de paquetería'], 'wq.s.cost': ['Shipping cost', 'Costo de paquetería'],
+  'wq.costHint': ['Enter what the carrier charged for this shipment, in USD. CESANTONI reviews it. You can attach the receipt or invoice.', 'Captura lo que cobró la paquetería por este envío, en USD. CESANTONI lo revisa. Puedes adjuntar el recibo o la factura.'],
+  'wq.costAmount': ['Shipping cost (USD)', 'Costo de paquetería (USD)'], 'wq.costNotes': ['Notes (invoice no., service…)', 'Notas (núm. de factura, servicio…)'], 'wq.costBtn': ['Save cost', 'Guardar costo'], 'wq.costSaved': ['Cost reported', 'Costo reportado'],
+  'wq.costReceipt': ['Receipt or invoice (optional)', 'Recibo o factura (opcional)'], 'wq.costNeeded': ['Enter the amount in USD', 'Captura el importe en USD'],
+  'wq.ev.title': ['Evidence status', 'Estado de las evidencias'], 'wq.ev.APPROVED': ['approved', 'aprobadas'], 'wq.ev.PENDING': ['in review', 'en revisión'], 'wq.ev.RETURNED': ['returned', 'devueltas'], 'wq.ev.none': ['No evidence yet', 'Sin evidencias aún'],
+  'det.costReported': ['Reported by Warehouse', 'Reportado por Almacén'],
   'wq.title': ['My work queue', 'Mis pendientes'], 'wq.sub': ['Open requests and the next step of each. Open one and complete its steps on the same page.', 'Folios abiertos y el siguiente paso de cada uno. Abre uno y completa sus pasos en la misma página.'],
   'wq.searchPh': ['Search request number, customer, city or product…', 'Buscar folio, cliente, ciudad o producto…'], 'wq.empty': ['No open requests. All caught up.', 'No hay folios abiertos. Todo al día.'],
   'wq.q.ALL': ['All', 'Todos'], 'wq.q.prep': ['To prepare', 'Por preparar'], 'wq.q.pack': ['To pack', 'Por embalar'], 'wq.q.ship': ['To ship', 'Por enviar'], 'wq.q.delivery': ['To deliver', 'Por entregar'], 'wq.q.returned': ['To correct', 'Por corregir'], 'wq.q.done': ['Complete', 'Completos'],

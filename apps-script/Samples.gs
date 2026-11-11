@@ -844,7 +844,7 @@ function filaPara(item) {
   if (item.kind === 'OPERATION') {
     var r = fsGet('sc_solicitudes', item.requestNo); if (!r) return null;
     var sh = fsGet('sc_envios', item.requestNo) || {}, c = fsGet('sc_costos', item.requestNo);
-    return { hoja: 'OPERATION', clave: 'REQUEST NO.', v: { 'REQUEST NO.': r.requestNo, 'REQUEST ID': r.requestId || '', 'STATUS': r.status, 'PREPARATION DATE': (r.statusDates || {}).PREPARED || '', 'SHIP DATE': sh.shipDate || '', 'DELIVERY DATE': sh.deliveredAt || '', 'CARRIER': sh.carrier || '', 'TRACKING NO.': sh.trackingNo || '', 'TRACKING URL': sh.trackingUrl || '', 'SHIPPING COST': c && c.amountUsd !== null && c.amountUsd !== undefined ? c.amountUsd : '', 'CURRENCY': 'USD', 'UPDATED BY': 'SYSTEM', 'LAST UPDATED': new Date().toISOString() } };
+    return { hoja: 'OPERATION', clave: 'REQUEST NO.', v: { 'REQUEST NO.': r.requestNo, 'REQUEST ID': r.requestId || '', 'STATUS': r.status, 'PREPARATION DATE': (r.statusDates || {}).PREPARED || '', 'SHIP DATE': sh.shipDate || '', 'DELIVERY DATE': sh.deliveredAt || '', 'CARRIER': sh.carrier || '', 'TRACKING NO.': sh.trackingNo || '', 'TRACKING URL': sh.trackingUrl || '', 'SHIPPING COST': c && c.amountUsd !== null && c.amountUsd !== undefined ? c.amountUsd : (sh.reportedCost && sh.reportedCost.amountUsd !== null && sh.reportedCost.amountUsd !== undefined ? sh.reportedCost.amountUsd : ''), 'CURRENCY': 'USD', 'UPDATED BY': 'SYSTEM', 'LAST UPDATED': new Date().toISOString() } };
   }
   return null;
 }

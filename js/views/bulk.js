@@ -10,6 +10,7 @@ import { readZip } from '../zip.js';
 const plain = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[_\-.]+/g, ' ');
 // Most specific first. Matches the English type names and common Spanish words.
 const TYPE_WORDS = [
+  ['SHIPPING_COST_RECEIPT', ['cost receipt', 'costo', 'factura', 'invoice', 'recibo']],
   ['SHIPPING_LABEL_PHOTO', ['shipping label', 'guia', 'etiqueta', 'label', 'tracking']],
   ['CARRIER_DROPOFF_PROOF', ['drop off', 'dropoff', 'entrega a paqueteria', 'comprobante paqueteria']],
   ['FINAL_PACKAGING_PHOTO', ['final packaging', 'embalaje final', 'empaque final', 'caja cerrada']],

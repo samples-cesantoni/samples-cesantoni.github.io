@@ -20,6 +20,7 @@ function summary(ctx, req, area, tc) {
     observations: (req.observations || []).length, sourceNotes: req.sourceNotes || '',
     models: req.lines.map((l) => l.model), skus: req.lines.map((l) => l.sku).filter(Boolean),
     overdue: Boolean(overdue(ctx, req, times, ctx.settings())),
+    costReported: ship.reportedCost?.amountUsd !== null && ship.reportedCost?.amountUsd !== undefined,
   };
   if (area === 'CESANTONI') { s.customerEmail = req.customer.email; s.costUsd = d.shippingCosts[req.requestNo]?.amountUsd ?? null; }
   return s;

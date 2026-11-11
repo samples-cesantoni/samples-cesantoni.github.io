@@ -43,10 +43,26 @@ function saveInvoice(d, input, area) {
 function setShippingCost(d, requestNo, input, area) {
   if (!d.requests[requestNo]) throw new AppError(404, 'REQUEST_NOT_FOUND', 'Request not found');
   const amountUsd = input.amountUsd === '' || input.amountUsd === null ? null : money(input.amountUsd);
-  d.shippingCosts[requestNo] = { requestNo, amountUsd, currency: 'USD', notes: String(input.notes || ''), recordedAt: new Date().toISOString() };
+  d.shippingCosts[requestNo] = { requestNo, amountUsd, currency: 'USD', notes: String(input.notes || ''), recordedAt: new Date().toISOString(), source: 'CESANTONI' };
   logEvent(d, { requestNo, event: 'Shipping cost recorded', area });
   d.sheetOutbox.push({ kind: 'OPERATION', requestNo, at: new Date().toISOString() });
   return { cost: d.shippingCosts[requestNo] };
+}
+
+// The Warehouse reports what it paid the carrier on the shipment; a CESANTONI session copies it to the official
+// cost record. A cost captured or corrected by CESANTONI is never overwritten.
+const reportedPending = (d) => Object.values(d.shipments).filter((s) => {
+  const r = s.reportedCost; const c = d.shippingCosts[s.requestNo];
+  if (!r || r.amountUsd === null || r.amountUsd === undefined || !d.requests[s.requestNo]) return false;
+  return !c || (c.source === 'WAREHOUSE' && c.reportedAt !== r.at);
+});
+function adoptReportedCosts(d) {
+  for (const s of reportedPending(d)) {
+    const r = s.reportedCost; const at = new Date().toISOString();
+    d.shippingCosts[s.requestNo] = { requestNo: s.requestNo, amountUsd: r.amountUsd, currency: 'USD', notes: r.notes || '', recordedAt: at, source: 'WAREHOUSE', reportedAt: r.at };
+    logEvent(d, { requestNo: s.requestNo, event: 'Shipping cost reported by Warehouse recorded', area: 'SYSTEM', at });
+    d.sheetOutbox.push({ kind: 'OPERATION', requestNo: s.requestNo, at });
+  }
 }
 
 // Shipment date used to place a not-yet-invoiced shipment in a month, with the criterion used.
@@ -90,4 +106,4 @@ function financeSummary(d, tz, f = {}) {
   };
 }
 
-export { saveInvoice, setShippingCost, financeSummary, isShipment, shipmentPeriod };
+export { saveInvoice, setShippingCost, reportedPending, adoptReportedCosts, financeSummary, isShipment, shipmentPeriod };

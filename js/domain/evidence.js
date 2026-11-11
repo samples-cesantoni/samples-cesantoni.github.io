@@ -71,6 +71,16 @@ function setShipment(d, settings, requestNo, input, area) {
     if (input.estimatedDate !== undefined) s.estimatedDate = input.estimatedDate || '';
     if (input.estimateConfirmed !== undefined) s.estimateConfirmed = Boolean(input.estimateConfirmed);
   }
+  // Shipping cost reported by whoever paid the carrier (the Warehouse). CESANTONI sees it in Billing; see finance.adoptReportedCosts.
+  if (input.reportedCostUsd !== undefined) {
+    const raw = input.reportedCostUsd;
+    if (raw === '' || raw === null) s.reportedCost = null;
+    else {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0 || n > 100000) throw new AppError(400, 'INVALID_AMOUNT', 'Amount must be a non-negative USD value');
+      s.reportedCost = { amountUsd: Math.round(n * 100) / 100, currency: 'USD', notes: String(input.reportedCostNotes || '').slice(0, 300), at: new Date().toISOString(), area };
+    }
+  }
   if (input.deliveredAt !== undefined) {
     if (input.deliveredAt && isNaN(new Date(input.deliveredAt))) throw new AppError(400, 'INVALID_DATE', 'Invalid delivery date');
     if (input.deliveredAt && new Date(input.deliveredAt) > new Date(Date.now() + 3600e3)) throw new AppError(400, 'FUTURE_DATE', 'A delivery cannot be recorded in the future');

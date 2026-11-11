@@ -525,3 +525,4 @@ button.kpi.sel { outline: 2px solid var(--menu); outline-offset: -1px; }
 .qty-grid input { width: 74px; min-height: 34px; padding: 4px 8px; }
 @media (max-width: 900px) { .wq-row { grid-template-columns: 1fr; gap: 8px; } .wq-go { justify-self: start; } .wstep-b { padding: 0 14px 16px; } }
 @media (max-width: 700px) { .wq-kpis { display: none; } }
+.wq-ev { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
