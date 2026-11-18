@@ -56,13 +56,13 @@ export async function render(el, ctx) {
       const term = f.q.trim().toUpperCase();
       const rows = data.rows.filter((r) => (!f.kind || r.kind === f.kind) && (!f.state || stateKey(r) === f.state)
         && (!term || [r.model, r.color, r.finish, r.sampleSize, r.label, r.ref].some((v) => String(v || '').toUpperCase().includes(term))));
-      body.querySelector('[data-table]').innerHTML = rows.length ? html`<div class="table-wrap sticky inv-tall"><table class="t cards dense"><thead><tr>
-          <th>${t('stk.location')}</th><th>${t('common.model')}</th><th>${t('common.color')}</th><th>${t('inv.finish')}</th><th>${t('inv.type')}</th><th class="num">${t('inv.onHand')}</th><th>${t('inv.state')}</th>${ces && platform ? html`<th></th>` : ''}</tr></thead><tbody>
+      body.querySelector('[data-table]').innerHTML = rows.length ? html`<div class="table-wrap sticky inv-tall"><table class="t dense"><thead><tr>
+          <th>${t('stk.location')}</th><th>${t('common.model')}</th><th>${t('common.color')}</th><th>${t('inv.finish')}</th><th>${t('inv.type')}</th><th class="num">${t('inv.onHand')}</th><th>${t('inv.state')}</th>${ces && platform ? html`<th class="edit-col"></th>` : ''}</tr></thead><tbody>
         ${raw(rows.map((r) => html`<tr class="${r.active === false ? 'inactive' : ''} ${ces && platform ? 'click' : ''}" data-row="${r.ref}">
           <td data-l="${t('stk.location')}" class="small nowrap">${r.label || '—'}</td><td data-l="${t('common.model')}" class="strong">${r.model}</td><td data-l="${t('common.color')}">${r.color || '—'}</td>
           <td data-l="${t('inv.finish')}">${r.finish || '—'}</td><td data-l="${t('inv.type')}" class="small">${KIND[r.kind] || '—'}${r.sampleSize && !/^(20X20|STANDARD)$/i.test(String(r.sampleSize).trim()) ? html` <span class="muted">· ${r.sampleSize}</span>` : ''}</td>
           <td data-l="${t('inv.onHand')}" class="num strong">${r.quantity ?? 0}</td><td data-l="${t('inv.state')}"><span class="badge ${tone(r)}">${t(stateKey(r))}</span></td>
-          ${ces && platform ? html`<td style="text-align:right"><button class="btn btn-ghost btn-sm" data-edit="${r.ref}" tabindex="-1">${t('stk.edit')}</button></td>` : ''}</tr>`.s).join(''))}</tbody></table></div>
+          ${ces && platform ? html`<td class="edit-col" style="text-align:right"><button class="btn btn-ghost btn-sm" data-edit="${r.ref}" tabindex="-1">${t('stk.edit')}</button></td>` : ''}</tr>`.s).join(''))}</tbody></table></div>
         <p class="small muted" style="margin:10px 2px 0">${rows.length} / ${data.rows.length}</p>`.s : emptyState().s;
       if (ces && platform) body.querySelectorAll('[data-row]').forEach((tr) => tr.addEventListener('click', () => editRow(data.rows.find((r) => r.ref === tr.dataset.row))));
     };

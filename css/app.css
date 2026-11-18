@@ -527,16 +527,16 @@ button.kpi.sel { outline: 2px solid var(--menu); outline-offset: -1px; }
 @media (max-width: 700px) { .wq-kpis { display: none; } }
 .wq-ev { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
 
-/* Inventory: one long list that fills the whole sheet. The page scrolls (no inner scroll box, no sideways scroll) and the
-   column titles stay under the top bar. */
+/* Inventory: one long list that fills the whole sheet. Nothing is frozen and there is no scroll box of its own: the page
+   scrolls as usual (a table wider than the screen scrolls sideways). */
 .content:has(.inv-tall) { max-width: none; padding: 14px 14px 40px; }
 .content:has(.inv-tall) .page-head { margin-bottom: 10px; }
 .content:has(.inv-tall) .page-head p { display: none; }
 .card:has(.inv-tall) { padding: 12px 14px 14px; }
 .card:has(.inv-tall) .tabs { margin-bottom: 10px; }
-.table-wrap.sticky.inv-tall { max-height: none; min-height: 0; overflow: visible; border-radius: 10px; }
+.table-wrap.sticky.inv-tall { max-height: none; min-height: 0; overflow-x: auto; overflow-y: visible; border-radius: 10px; }
 .table-wrap.sticky.inv-tall table { width: 100%; font-size: 13px; }
-.table-wrap.sticky.inv-tall thead th { top: var(--top); z-index: 5; padding: 8px 10px; font-size: 10.5px; white-space: normal; }
+.table-wrap.sticky.inv-tall thead th { position: static; box-shadow: none; padding: 8px 10px; font-size: 10.5px; white-space: normal; }
 .inv-tall .t.dense td { padding: 5px 10px; line-height: 1.25; }
 .inv-tall .t.dense td.strong { font-size: 13px; }
 .inv-tall .t.dense .btn-sm { padding: 0 9px; font-size: 12px; height: 26px; min-height: 0; line-height: 1; }
@@ -544,3 +544,4 @@ button.kpi.sel { outline: 2px solid var(--menu); outline-offset: -1px; }
 .kpis.compact { gap: 10px; }
 .kpis.compact .kpi { padding: 8px 14px; }
 .kpis.compact .kpi .v { font-size: 20px; margin-top: 2px; }
+@media (max-width: 900px) { .inv-tall .edit-col { display: none; } }  /* touching a row already opens it for editing */
