@@ -527,14 +527,20 @@ button.kpi.sel { outline: 2px solid var(--menu); outline-offset: -1px; }
 @media (max-width: 700px) { .wq-kpis { display: none; } }
 .wq-ev { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
 
-/* Inventory: one long, wide list. The page scrolls (no inner scroll box) and the column titles stay under the top bar. */
-.content:has(.inv-tall) { max-width: 2000px; padding-top: 18px; }
-.content:has(.inv-tall) .page-head { margin-bottom: 12px; }
+/* Inventory: one long list that fills the whole sheet. The page scrolls (no inner scroll box, no sideways scroll) and the
+   column titles stay under the top bar. */
+.content:has(.inv-tall) { max-width: none; padding: 14px 14px 40px; }
+.content:has(.inv-tall) .page-head { margin-bottom: 10px; }
 .content:has(.inv-tall) .page-head p { display: none; }
-.table-wrap.sticky.inv-tall { max-height: none; min-height: 0; overflow: visible; }
-.table-wrap.sticky.inv-tall thead th { top: var(--top); z-index: 5; padding: 9px 12px; }
-.inv-tall .t.dense td { padding: 6px 12px; }
-.inv-tall .t.dense .btn-sm { padding: 4px 10px; }
-.kpis.compact { gap: 12px; }
-.kpis.compact .kpi { padding: 9px 16px; }
-.kpis.compact .kpi .v { font-size: 22px; margin-top: 3px; }
+.card:has(.inv-tall) { padding: 12px 14px 14px; }
+.card:has(.inv-tall) .tabs { margin-bottom: 10px; }
+.table-wrap.sticky.inv-tall { max-height: none; min-height: 0; overflow: visible; border-radius: 10px; }
+.table-wrap.sticky.inv-tall table { width: 100%; font-size: 13px; }
+.table-wrap.sticky.inv-tall thead th { top: var(--top); z-index: 5; padding: 8px 10px; font-size: 10.5px; white-space: normal; }
+.inv-tall .t.dense td { padding: 5px 10px; line-height: 1.25; }
+.inv-tall .t.dense td.strong { font-size: 13px; }
+.inv-tall .t.dense .btn-sm { padding: 0 9px; font-size: 12px; height: 26px; min-height: 0; line-height: 1; }
+.inv-tall .t.dense .badge { font-size: 11px; padding: 2px 8px; }
+.kpis.compact { gap: 10px; }
+.kpis.compact .kpi { padding: 8px 14px; }
+.kpis.compact .kpi .v { font-size: 20px; margin-top: 2px; }
