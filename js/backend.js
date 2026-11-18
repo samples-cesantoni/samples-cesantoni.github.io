@@ -379,6 +379,7 @@ on('GET', '/stock', () => {
 });
 on('POST', '/stock/excel/preview', async (q, b, p, form) => { const list = await readInventoryExcel(form.get('file')); return stock.diffExcel(JSON.parse(JSON.stringify(store.d)), list); }, ces);
 on('POST', '/stock/excel/apply', async (q, b, p, form) => { const list = await readInventoryExcel(form.get('file')); return store.mutate((d) => stock.applyExcel(d, list, { name: form.get('file').name, deactivateMissing: form.get('deactivate') === '1' }, store.area), 'STOCK_EXCEL'); }, ces);
+on('POST', '/stock/remove-inactive', () => store.mutate((d) => stock.removeInactive(d, store.area), 'STOCK_REMOVE_INACTIVE'), ces);
 on('POST', '/stock/rows', (q, b) => store.mutate((d) => stock.saveRow(d, b, store.area), 'STOCK_ROW'), ces);
 on('POST', '/stock/platform', () => store.mutate((d) => { stock.startPlatform(d); return { mode: d.settings.inventorySource }; }, 'STOCK_PLATFORM'), ces);
 on('GET', '/inventory/movements', (q) => ({

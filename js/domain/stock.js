@@ -131,6 +131,24 @@ function applyExcel(d, rows, { name, deactivateMissing = false }, area) {
   return { added, changed, deactivated: deactivateMissing ? missing.length : 0, rows: rows.length };
 }
 
+// Removes the rows that were deactivated (products that are no longer in the inventory). Rows with reserved pieces, or whose
+// deductions belong to a request that is still open, stay. The removal is written to the activity log; the stock movements stay.
+function removeInactive(d, area) {
+  const open = new Set(Object.values(d.requests || {}).filter((r) => !['DELIVERED', 'CANCELLED'].includes(r.status)).map((r) => r.requestNo));
+  const keep = []; const gone = []; const kept = [];
+  for (const r of d.physicalInventory || []) {
+    if (r.active !== false) { keep.push(r); continue; }
+    const busy = (r.reserved || 0) > 0 || (d.movements || []).some((m) => m.rowRef === r.ref && m.requestNo && open.has(m.requestNo));
+    if (busy) { keep.push(r); kept.push(r); } else gone.push(r);
+  }
+  if (gone.length) {
+    d.physicalInventory = keep;
+    const names = gone.map((r) => [r.model, r.color].filter(Boolean).join(' ')).join(', ');
+    logEvent(d, { event: `Inventory: ${gone.length} deactivated product${gone.length === 1 ? '' : 's'} removed (${names.slice(0, 500)})`, area });
+  }
+  return { removed: gone.length, kept: kept.length };
+}
+
 // One row edited in the platform (or a new one). Quantity changes need a reason and are recorded.
 function saveRow(d, input, area) {
   startPlatform(d);
@@ -159,5 +177,5 @@ function saveRow(d, input, area) {
   return { row: saved };
 }
 
-export { platformMode, kindOf, rowKind, rowLabel, ensureRefs, rowByRef, matchRow, deductRow, returnToRow, publicCatalog, startPlatform, diffExcel, applyExcel, saveRow };
+export { platformMode, kindOf, rowKind, rowLabel, ensureRefs, rowByRef, matchRow, deductRow, returnToRow, publicCatalog, startPlatform, diffExcel, applyExcel, saveRow, removeInactive };
 

@@ -17,7 +17,7 @@ export async function render(el, ctx) {
         <button class="btn btn-ghost" data-import>${icon('upload')}${t('stk.import')}</button>
         <button class="btn btn-primary" data-add>${icon('plus')}${t('stk.add')}</button></div>` : ''}</div>
     <div data-mode></div>
-    <div class="kpis" data-kpis style="margin-bottom:18px"></div>
+    <div class="kpis compact" data-kpis style="margin-bottom:14px"></div>
     <div class="card"><div class="tabs" data-tabs></div><div data-body></div></div>`.s;
 
   const load = async () => { data = await api('/stock'); draw(); };
@@ -44,13 +44,19 @@ export async function render(el, ctx) {
         <label class="field search"><span>${t('common.search')}</span><input class="input" name="q" value="${f.q}" placeholder="${t('inv.searchPh')}"></label>
         <label class="field"><span>${t('inv.type')}</span><select class="input" name="kind"><option value="">${t('common.all')}</option>${raw(Object.entries(KIND).map(([v, l]) => `<option value="${v}" ${f.kind === v ? 'selected' : ''}>${l}</option>`).join(''))}</select></label>
         <label class="field"><span>${t('inv.state')}</span><select class="input" name="state"><option value="">${t('common.all')}</option>${raw(['is.AVAILABLE', 'is.LOW', 'is.OUT_OF_STOCK', 'is.INACTIVE'].map((v) => `<option value="${v}" ${f.state === v ? 'selected' : ''}>${esc(t(v))}</option>`).join(''))}</select></label>
+        ${ces && platform && data.rows.some((r) => r.active === false) ? html`<div class="field" style="align-self:end"><button type="button" class="btn btn-ghost" data-purge>${t('stk.purge')} (${data.rows.filter((r) => r.active === false).length})</button></div>` : ''}
       </form><div data-table></div>`.s;
     const form = body.querySelector('[data-f]');
+    body.querySelector('[data-purge]')?.addEventListener('click', async (e) => {
+      const n = data.rows.filter((r) => r.active === false).length;
+      if (!(await confirmDialog(t('stk.purgeConfirm').replace('{n}', n)))) return;
+      busy(e.currentTarget, async () => { const r = await api('/stock/remove-inactive', { method: 'POST', body: {} }); toast(`${t('stk.purged')}: ${r.removed}${r.kept ? ` · ${t('stk.purgeKept')}: ${r.kept}` : ''}`, 'ok', 7000); load(); }).catch((x) => errToast(x));
+    });
     const table = () => {
       const term = f.q.trim().toUpperCase();
       const rows = data.rows.filter((r) => (!f.kind || r.kind === f.kind) && (!f.state || stateKey(r) === f.state)
         && (!term || [r.model, r.color, r.finish, r.sampleSize, r.label, r.ref].some((v) => String(v || '').toUpperCase().includes(term))));
-      body.querySelector('[data-table]').innerHTML = rows.length ? html`<div class="table-wrap sticky"><table class="t cards dense"><thead><tr>
+      body.querySelector('[data-table]').innerHTML = rows.length ? html`<div class="table-wrap sticky inv-tall"><table class="t cards dense"><thead><tr>
           <th>${t('stk.location')}</th><th>${t('common.model')}</th><th>${t('common.color')}</th><th>${t('inv.finish')}</th><th>${t('inv.sampleSize')}</th><th>${t('inv.type')}</th><th class="num">${t('inv.onHand')}</th><th>${t('inv.state')}</th>${ces && platform ? html`<th></th>` : ''}</tr></thead><tbody>
         ${raw(rows.map((r) => html`<tr class="${r.active === false ? 'inactive' : ''} ${ces && platform ? 'click' : ''}" data-row="${r.ref}">
           <td data-l="${t('stk.location')}" class="small nowrap">${r.label || '—'}</td><td data-l="${t('common.model')}" class="strong">${r.model}</td><td data-l="${t('common.color')}">${r.color || '—'}</td>
