@@ -52,12 +52,15 @@ export async function render(el, ctx) {
       if (!(await confirmDialog(t('stk.purgeConfirm').replace('{n}', n)))) return;
       busy(e.currentTarget, async () => { const r = await api('/stock/remove-inactive', { method: 'POST', body: {} }); toast(`${t('stk.purged')}: ${r.removed}${r.kept ? ` · ${t('stk.purgeKept')}: ${r.kept}` : ''}`, 'ok', 7000); load(); }).catch((x) => errToast(x));
     });
+    // The column titles stay pinned right under the top bar: measure it so there is no gap and no row shows between them.
+    const bar = document.querySelector('.topbar');
+    if (bar) el.style.setProperty('--inv-top', `${Math.round(bar.getBoundingClientRect().height)}px`);
     const table = () => {
       const term = f.q.trim().toUpperCase();
       const rows = data.rows.filter((r) => (!f.kind || r.kind === f.kind) && (!f.state || stateKey(r) === f.state)
         && (!term || [r.model, r.color, r.finish, r.sampleSize, r.label, r.ref].some((v) => String(v || '').toUpperCase().includes(term))));
-      body.querySelector('[data-table]').innerHTML = rows.length ? html`<div class="table-wrap sticky inv-tall"><table class="t dense"><thead><tr>
-          <th>${t('stk.location')}</th><th>${t('common.model')}</th><th>${t('common.color')}</th><th>${t('inv.finish')}</th><th>${t('inv.type')}</th><th class="num">${t('inv.onHand')}</th><th>${t('inv.state')}</th>${ces && platform ? html`<th class="edit-col"></th>` : ''}</tr></thead><tbody>
+      body.querySelector('[data-table]').innerHTML = rows.length ? html`<div class="table-wrap sticky inv-tall"><table class="t dense inv-table ${ces && platform ? 'with-edit' : ''}"><thead><tr>
+          <th>${t('stk.location')}</th><th>${t('common.model')}</th><th>${t('common.color')}</th><th>${t('inv.finish')}</th><th>${t('stk.colType')}</th><th class="num">${t('common.pieces')}</th><th>${t('stk.colState')}</th>${ces && platform ? html`<th class="edit-col"></th>` : ''}</tr></thead><tbody>
         ${raw(rows.map((r) => html`<tr class="${r.active === false ? 'inactive' : ''} ${ces && platform ? 'click' : ''}" data-row="${r.ref}">
           <td data-l="${t('stk.location')}" class="small nowrap">${r.label || '—'}</td><td data-l="${t('common.model')}" class="strong">${r.model}</td><td data-l="${t('common.color')}">${r.color || '—'}</td>
           <td data-l="${t('inv.finish')}">${r.finish || '—'}</td><td data-l="${t('inv.type')}" class="small">${KIND[r.kind] || '—'}${r.sampleSize && !/^(20X20|STANDARD)$/i.test(String(r.sampleSize).trim()) ? html` <span class="muted">· ${r.sampleSize}</span>` : ''}</td>

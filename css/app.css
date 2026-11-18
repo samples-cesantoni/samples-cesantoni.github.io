@@ -527,21 +527,30 @@ button.kpi.sel { outline: 2px solid var(--menu); outline-offset: -1px; }
 @media (max-width: 700px) { .wq-kpis { display: none; } }
 .wq-ev { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
 
-/* Inventory: one long list that fills the whole sheet. Nothing is frozen and there is no scroll box of its own: the page
-   scrolls as usual (a table wider than the screen scrolls sideways). */
+/* Inventory: one long list that fills the whole sheet. The page scrolls as usual; the column titles are pinned right under
+   the top bar (solid background, one line, fixed column widths so everything lines up). */
 .content:has(.inv-tall) { max-width: none; padding: 14px 14px 40px; }
 .content:has(.inv-tall) .page-head { margin-bottom: 10px; }
 .content:has(.inv-tall) .page-head p { display: none; }
 .card:has(.inv-tall) { padding: 12px 14px 14px; }
 .card:has(.inv-tall) .tabs { margin-bottom: 10px; }
-.table-wrap.sticky.inv-tall { max-height: none; min-height: 0; overflow-x: auto; overflow-y: visible; border-radius: 10px; }
-.table-wrap.sticky.inv-tall table { width: 100%; font-size: 13px; }
-.table-wrap.sticky.inv-tall thead th { position: static; box-shadow: none; padding: 8px 10px; font-size: 10.5px; white-space: normal; }
-.inv-tall .t.dense td { padding: 5px 10px; line-height: 1.25; }
+.table-wrap.sticky.inv-tall { max-height: none; min-height: 0; overflow: visible; border: 0; background: transparent; border-radius: 0; }
+.inv-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 13px; background: #fff; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; }
+.inv-table th:nth-child(1) { width: 18%; } .inv-table th:nth-child(2) { width: 24%; } .inv-table th:nth-child(3) { width: 14%; } .inv-table th:nth-child(4) { width: 13%; }
+.inv-table th:nth-child(5) { width: 13%; } .inv-table th:nth-child(6) { width: 9%; } .inv-table th:nth-child(7) { width: 9%; }
+.inv-table.with-edit th:nth-child(1) { width: 17%; } .inv-table.with-edit th:nth-child(2) { width: 21%; } .inv-table.with-edit th:nth-child(3) { width: 12%; } .inv-table.with-edit th:nth-child(4) { width: 11%; }
+.inv-table.with-edit th:nth-child(5) { width: 12%; } .inv-table.with-edit th:nth-child(6) { width: 9%; } .inv-table.with-edit th:nth-child(7) { width: 10%; } .inv-table.with-edit th:nth-child(8) { width: 8%; }
+.table-wrap.sticky.inv-tall thead th { position: sticky; top: var(--inv-top, 60px); z-index: 20; background: #F3F4F6; color: #4B535B; padding: 11px 8px 11px 10px; font-size: 10.5px; letter-spacing: .4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-top: 1px solid var(--line); border-bottom: 1px solid #D9DCE0; box-shadow: 0 6px 8px -7px rgba(25,29,32,.28); }
+.table-wrap.sticky.inv-tall thead th:first-child { border-left: 1px solid var(--line); border-top-left-radius: 10px; }
+.table-wrap.sticky.inv-tall thead th:last-child { border-right: 1px solid var(--line); border-top-right-radius: 10px; }
+.inv-tall .t.dense td { padding: 5px 8px 5px 10px; line-height: 1.25; overflow-wrap: break-word; word-break: normal; white-space: normal; }
+.inv-tall .t.dense td.nowrap { white-space: normal; }
 .inv-tall .t.dense td.strong { font-size: 13px; }
 .inv-tall .t.dense .btn-sm { padding: 0 9px; font-size: 12px; height: 26px; min-height: 0; line-height: 1; }
 .inv-tall .t.dense .badge { font-size: 11px; padding: 2px 8px; }
 .kpis.compact { gap: 10px; }
 .kpis.compact .kpi { padding: 8px 14px; }
 .kpis.compact .kpi .v { font-size: 20px; margin-top: 2px; }
-@media (max-width: 900px) { .inv-tall .edit-col { display: none; } }  /* touching a row already opens it for editing */
+@media (max-width: 1150px) { .inv-tall .edit-col { display: none; } .inv-table.with-edit th:nth-child(1) { width: 18%; } .inv-table.with-edit th:nth-child(2) { width: 22%; } .inv-table.with-edit th:nth-child(3) { width: 13%; } .inv-table.with-edit th:nth-child(4) { width: 11%; } .inv-table.with-edit th:nth-child(5) { width: 13%; } .inv-table.with-edit th:nth-child(6) { width: 11%; } .inv-table.with-edit th:nth-child(7) { width: 12%; } }  /* touching a row already opens it for editing */
+@media (max-width: 640px) { .table-wrap.sticky.inv-tall { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: #fff; } .inv-table { table-layout: auto; border: 0; } .table-wrap.sticky.inv-tall thead th { position: static; box-shadow: none; } }
